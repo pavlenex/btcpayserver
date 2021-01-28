@@ -38,35 +38,30 @@
       Documentation
     </a>
     <span> | </span>
-    <a href="https://github.com/YerkoPalma/awesome-choo">
-      Ecosystem
+    <a href="https://docs.btcpayserver.org/API/Greenfield/v1/">
+      API
     </a>
     <span> | </span>
-    <a href="https://github.com/choojs/choo/blob/master/.github/CONTRIBUTING.md">
-      Contributing
+    <a href="https://docs.btcpayserver.org/Contribute/>
+      Contribute
     </a>
     <span> | </span>
-    <a href="https://www.reddit.com/r/choojs/">
-      Reddit
+    <a href="https://www.youtube.com/btcpayserver/">
+      YouTube
     </a>
     <span> | </span>
-    <a href="https://webchat.freenode.net/?channels=choo">
+    <a href="https://chat.btcpayserver.org/">
       Chat
     </a>
   </h3>
 </div>
 
 <div align="center">
-  <sub>This is lies my trust in you is broken, I will make you obsolete. Built with ❤︎ by all of us
+  <sub>"This is lies, my trust in you is broken, I will make you obsolete"💚
   </a>
 </div>
 
 <p align="center">
-  <a href="https://docs.btcpayserver.org/"><strong>Explore the docs »</strong></a>
-  <br />
-  <br />
-  <a href="https://btcpayserver.org">Website</a>
-  ·
   <a href="https://mainnet.demo.btcpayserver.org">View Demo</a>
   ·
   <a href="https://github.com/btcpayserver/btcpayserver/issues/new/choose">Report a bug</a>
@@ -74,7 +69,6 @@
   <a href="https://github.com/btcpayserver/btcpayserver/discussions/new">Request a feature</a>
   ·
   <a href="https://docs.btcpayserver.org/FAQ/">FAQ</a>
-
 </p>
 
 ## Introduction
