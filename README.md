@@ -31,6 +31,7 @@
 <p align="center">
     <a href="https://docs.btcpayserver.org/"><strong>Explore the docs »</strong></a>
     <br />
+    <br />
     <a href="https://mainnet.demo.btcpayserver.org">View Demo</a>
     ·
     <a href="https://github.com/btcpayserver/btcpayserver/issues/new/choose">Report Bug</a>
