@@ -88,25 +88,20 @@
 
 * Direct, peer-to-peer Bitcoin payments
 * No transaction fees (other than the [network fee](https://en.bitcoin.it/wiki/Miner_fees))
-* No processing fees
-* No middleman
-* No KYC
+* No fees, middleman or KYC
 * Non-custodial (complete control over the private key)
-* Enhanced privacy
-* Enhanced security
+* Enhanced privacy & privacy
 * Self-hosted
 * SegWit support
 * Lightning Network support (LND, c-lightning, Eclair, and Ptarmigan)
 * Tor support
 * Bitcoin-only build
-* Altcoin build if altcoin support is enabled
-* Full compatibility with BitPay API (easy migration)
-* Process payments for others
-* Easy-embeddable payment buttons
-* Point of sale app
-* Crowdfunding app
-* Payment Requests
-* Internal, full-node reliant wallet with [hardware wallet integration](https://docs.btcpayserver.org/Vault/)
+* Share your instance with friends
+* Invoice management
+* Point of sale $ crowdfunding app
+* Payment requests and donation button
+* Full-node reliant wallet with [hardware wallet integration](https://docs.btcpayserver.org/Vault/)
+* Separate community-maintained altcoin build (when supported [altcoins](https://docs.btcpayserver.org/FAQ/FAQ-Altcoin/) are enabled)
 
 ## 🚀 Getting Started
 
@@ -121,16 +116,6 @@ Please check out our [official website](https://btcpayserver.org/), our [complet
 If you have trouble using BTCPay, consider joining [communities listed on the official website](https://btcpayserver.org/#communityCTA) to get help from the BTCPay community members. Only file [Github issue](https://github.com/btcpayserver/btcpayserver/issues) for technical issues you can't resolve through other channels or feature requests you've validated with other members of the community.
 
 The main community chat is located on [Mattermost](https://chat.btcpayserver.org/).
-
-## 🤝 Contributing
-
-BTCPay Server is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
-
-If you're a developer looking to help, but you're not sure where to begin, check the [good first issue label](https://github.com/btcpayserver/btcpayserver/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), which contains small pieces of work that have been specifically flagged as being friendly to new contributors.
-
-Contributors looking to do something a bit more challenging, before opening a pull request, please join [our community chat](https://chat.btcpayserver.org/) or [start a GitHub discussion](https://github.com/btcpayserver/btcpayserver/discussions) to get early feedback, discuss best ways to tackle the problem and ensure there is no work duplication.
-
-There are many other ways to get involved with the project. Check our [contribution guidelines](https://docs.btcpayserver.org/Contribute/). To get the big-picture of the project development, visit our [evolving roadmap](https://github.com/orgs/btcpayserver/projects/9). We organize different types of community calls several times a month. [Subscribe to our calendar](https://github.com/btcpayserver/organization#calendar) and feel free to join our calls to discuss development, design, documentation and more.
 
 ## 🧑‍💻 Developing
 
@@ -207,24 +192,15 @@ Then use the `Docker-Regtest-https` debug profile.
 For more information, see the documentation:
 [How to deploy a BTCPay Server instance](https://docs.btcpayserver.org/Deployment/).
 
-## 💚 Community
+## 🤝 Contributing
 
-Our community is ❤️ of the project.
+BTCPay Server is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
 
-The Next.js community can be found on GitHub Discussions, where you can ask questions, voice ideas, and share your projects.
+If you're a developer looking to help, but you're not sure where to begin, check the [good first issue label](https://github.com/btcpayserver/btcpayserver/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), which contains small pieces of work that have been specifically flagged as being friendly to new contributors.
 
-To chat with other community members you can join the Next.js Discord.
+Contributors looking to do something a bit more challenging, before opening a pull request, please join [our community chat](https://chat.btcpayserver.org/) or [start a GitHub discussion](https://github.com/btcpayserver/btcpayserver/discussions) to get early feedback, discuss best ways to tackle the problem and ensure there is no work duplication.
 
-Community chat
-Discussions
-Paid support
-
-
-## Bug report and feature requests
-
-### Bug report
-
-### Feature request
+There are many other ways to get involved with the project. Check our [contribution guidelines](https://docs.btcpayserver.org/Contribute/). To get the big-picture of the project development, visit our [evolving roadmap](https://github.com/orgs/btcpayserver/projects/9). We organize different types of community calls several times a month. [Subscribe to our calendar](https://github.com/btcpayserver/organization#calendar) and feel free to join our calls to discuss development, design, documentation and more.
 
 ## 📝 License
 
@@ -307,3 +283,23 @@ The BTCPay Server Project is proudly supported by these entities through the [BT
 </table>
 
 If you'd like to support the project, please visit the [donation page](https://btcpayserver.org/donate/).
+
+
+## 💚 Community
+
+Our community is ❤️ of the project.
+
+The Next.js community can be found on GitHub Discussions, where you can ask questions, voice ideas, and share your projects.
+
+To chat with other community members you can join the Next.js Discord.
+
+Community chat
+Discussions
+Paid support
+
+
+## Bug report and feature requests
+
+### Bug report
+
+### Feature request
