@@ -117,6 +117,16 @@ If you have trouble using BTCPay, consider joining [communities listed on the of
 
 The main community chat is located on [Mattermost](https://chat.btcpayserver.org/).
 
+## 🤝 Contributing
+
+BTCPay Server is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
+
+If you're a developer looking to help, but you're not sure where to begin, check the [good first issue label](https://github.com/btcpayserver/btcpayserver/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), which contains small pieces of work that have been specifically flagged as being friendly to new contributors.
+
+Contributors looking to do something a bit more challenging, before opening a pull request, please join [our community chat](https://chat.btcpayserver.org/) or [start a GitHub discussion](https://github.com/btcpayserver/btcpayserver/discussions) to get early feedback, discuss best ways to tackle the problem and ensure there is no work duplication.
+
+There are many other ways to get involved with the project. Check our [contribution guidelines](https://docs.btcpayserver.org/Contribute/). To get the big-picture of the project development, visit our [evolving roadmap](https://github.com/orgs/btcpayserver/projects/9). We organize different types of community calls several times a month. [Subscribe to our calendar](https://github.com/btcpayserver/organization#calendar) and feel free to join our calls to discuss development, design, documentation and more.
+
 ## 🧑‍💻 Developing
 
 To begin developing locally, visit [local development guide](https://docs.btcpayserver.org/LocalDevelopment/). There are also several video-tutorials:
@@ -191,16 +201,6 @@ Then use the `Docker-Regtest-https` debug profile.
 
 For more information, see the documentation:
 [How to deploy a BTCPay Server instance](https://docs.btcpayserver.org/Deployment/).
-
-## 🤝 Contributing
-
-BTCPay Server is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
-
-If you're a developer looking to help, but you're not sure where to begin, check the [good first issue label](https://github.com/btcpayserver/btcpayserver/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), which contains small pieces of work that have been specifically flagged as being friendly to new contributors.
-
-Contributors looking to do something a bit more challenging, before opening a pull request, please join [our community chat](https://chat.btcpayserver.org/) or [start a GitHub discussion](https://github.com/btcpayserver/btcpayserver/discussions) to get early feedback, discuss best ways to tackle the problem and ensure there is no work duplication.
-
-There are many other ways to get involved with the project. Check our [contribution guidelines](https://docs.btcpayserver.org/Contribute/). To get the big-picture of the project development, visit our [evolving roadmap](https://github.com/orgs/btcpayserver/projects/9). We organize different types of community calls several times a month. [Subscribe to our calendar](https://github.com/btcpayserver/organization#calendar) and feel free to join our calls to discuss development, design, documentation and more.
 
 ## 📝 License
 
