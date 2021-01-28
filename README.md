@@ -78,10 +78,11 @@
 * [Getting Started](#getting-started)
 * [Documentation](#documentation)
 * [Contributing](#Contributing)
-* [How to build](#how-to-build)
-* [How to run](#how-to-run)
-* [How to debug](#how-to-debug)
-* [Dependencies](#other-dependencies)
+* [Developing](#developing)
+  * [API](#API)
+* [Community](#Community)
+* [License](#License)
+* [Supporters](#Supporters)
 
 ## 🎨 Features
 
@@ -95,9 +96,10 @@
 * Enhanced security
 * Self-hosted
 * SegWit support
-* Lightning Network support (LND, c-lightning, Eclair and Ptarmigan)
+* Lightning Network support (LND, c-lightning, Eclair, and Ptarmigan)
 * Tor support
-* Opt-in [altcoin](https://docs.btcpayserver.org/FAQ/FAQ-Altcoin/) integrations
+* Bitcoin-only build
+* Altcoin build if altcoin support is enabled
 * Full compatibility with BitPay API (easy migration)
 * Process payments for others
 * Easy-embeddable payment buttons
@@ -116,30 +118,31 @@ After successful deployment, make sure to check our [getting started](https://do
 
 Please check out our [official website](https://btcpayserver.org/), our [complete documentation](https://docs.btcpayserver.org/) and [FAQ](https://docs.btcpayserver.org/FAQ/) for more details.
 
-If you have trouble using BTCPay, consider joining [communities listed on official website](https://btcpayserver.org/#communityCTA) to get help from BTCPay community members. Only file [Github issue](https://github.com/btcpayserver/btcpayserver/issues) for technical issues you can't resolve through other channels or feature requests you've validated with other members of community.
+If you have trouble using BTCPay, consider joining [communities listed on the official website](https://btcpayserver.org/#communityCTA) to get help from the BTCPay community members. Only file [Github issue](https://github.com/btcpayserver/btcpayserver/issues) for technical issues you can't resolve through other channels or feature requests you've validated with other members of the community.
 
-Main community chat is located on [Mattermost](https://chat.btcpayserver.org/).
+The main community chat is located on [Mattermost](https://chat.btcpayserver.org/).
 
 ## 🤝 Contributing
 
-BTCPay is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
+BTCPay Server is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
 
 If you're a developer looking to help, but you're not sure where to begin, check the [good first issue label](https://github.com/btcpayserver/btcpayserver/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), which contains small pieces of work that have been specifically flagged as being friendly to new contributors.
 
-Contributors looking to do something a bit more challenging, before opening a pull request, please [create an issue](https://github.com/btcpayserver/btcpayserver/issues/new/choose) or join [our community chat](https://chat.btcpayserver.org/) to get early feedback, discuss best ways to tackle the problem and to ensure there is no work duplication.
+Contributors looking to do something a bit more challenging, before opening a pull request, please join [our community chat](https://chat.btcpayserver.org/) or [start a GitHub discussion](https://github.com/btcpayserver/btcpayserver/discussions) to get early feedback, discuss best ways to tackle the problem and ensure there is no work duplication.
+
+There are many other ways to get involved with the project. Check our [contribution guidelines](https://docs.btcpayserver.org/Contribute/). To get the big-picture of the project development, visit our [evolving roadmap](https://github.com/orgs/btcpayserver/projects/9). We organize different types of community calls several times a month. [Subscribe to our calendar](https://github.com/btcpayserver/organization#calendar) and feel free to join our calls to discuss development, design, documentation and more.
+
+## 🧑‍💻 Developing
+
+To begin developing locally, visit [local development guide](https://docs.btcpayserver.org/LocalDevelopment/). There are also several video-tutorials:
 
 * [Setting up development environment on Windows](https://www.youtube.com/watch?v=ZePbMPSIvHM)
 * [Setting up development environment Linux (Ubuntu)](https://www.youtube.com/watch?v=j486T_Rk-yw&t)
 * [Setting up development environment MacOS](https://www.youtube.com/watch?v=GWR_CcMsEV0)
 
-You also have an awesome video of our contributors which explains how to get started.
-[![Rockstar Dev and Britt Kelly - BTCPay Server Code Along](https://img.youtube.com/vi/ZePbMPSIvHM/sddefault.jpg)](https://www.youtube.com/embed/VNMnd-dX9Q8)
+### 🧪 API
 
-Here is some info about [how to extend the themes](https://docs.btcpayserver.org/Theme/).
-
-### 👨‍💻 API
-
-BTCPay Server has two API's:
+BTCPay Server has two API:
 
 - **Greenfield API (New)**
   - [Greenfield API documentation](https://docs.btcpayserver.org/API/Greenfield/v1/)
@@ -149,11 +152,11 @@ BTCPay Server has two API's:
 The **Greenfield API** is our brand-new API which is still in development. Once complete, it will allow you to run BTCPay Server heedlessly.
 The **legacy API**, is fully compatible with [BitPay's API](https://bitpay.com/api/). It has limited features, but allows instant migration from BitPay.
 
-## How to build
+### How to build
 
-While the documentation advises to use docker-compose, you may want to build BTCPay Server yourself.
+While the documentation advises using docker-compose, you may want to build BTCPay Server yourself.
 
-First install .NET Core SDK v3.1 as specified by [Microsoft website](https://dotnet.microsoft.com/download/dotnet-core/3.1).
+First, install .NET Core SDK v3.1 as specified by [Microsoft website](https://dotnet.microsoft.com/download/dotnet-core/3.1).
 
 On Powershell:
 
@@ -167,9 +170,9 @@ On linux:
 ./build.sh
 ```
 
-## How to run
+### How to run
 
-Use the `run` scripts to run BTCPay Server, this example shows how to print the available command line arguments of BTCPay Server.
+Use the `run` scripts to run BTCPay Server, this example shows how to print the available command-line arguments of BTCPay Server.
 
 On Powershell:
 
@@ -183,7 +186,7 @@ On linux:
 ./run.sh --help
 ```
 
-## How to debug
+### How to debug
 
 If you want to debug, use Visual Studio Code or Visual Studio 2019.
 
@@ -197,23 +200,25 @@ If you need to debug ledger wallet interaction, install the development time cer
 # Install development time certificate in the trust store
 dotnet dev-certs https --trust
 ```
-
 Then use the `Docker-Regtest-https` debug profile.
 
-## Other dependencies
+### Other dependencies
 
 For more information, see the documentation:
 [How to deploy a BTCPay Server instance](https://docs.btcpayserver.org/Deployment/).
 
-## 💩 Supported altcoins
+## 💚 Community
 
-Bitcoin is the only focus of the project and its core developers. However, opt in integrations are present for [several altcoins](https://docs.btcpayserver.org/FAQ/FAQ-Altcoin/). Altcoins are maintained by their respective communities.
+Our community is the heart of the project.
+- 
+
+## Bug report and feature requests
 
 ## 📝 License
 
 BTCPay Server software, logo and designs are provided under [MIT License](https://github.com/btcpayserver/btcpayserver/blob/master/LICENSE).
 
-## 💚 Supporters
+## 🙏 Supporters
 
 The BTCPay Server Project is proudly supported by these entities through the [BTCPay Server Foundation](https://foundation.btcpayserver.org/).
 
