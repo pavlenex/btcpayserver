@@ -14,17 +14,16 @@
   <a href="https://circleci.com/gh/btcpayserver/btcpayserver">
     <img src="https://img.shields.io/circleci/build/github/btcpayserver/btcpayserver"/>
   </a>
+  <a href="https://github.com/btcpayserver/btcpayserver/releases/">
+    <img src="https://img.shields.io/github/v/release/btcpayserver/btcpayserver"/>  
   <a href="https://docs.btcpayserver.org/Contribute/">
     <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"/>
   </a>
   <a href="https://chat.btcpayserver.org/">
     <img src="https://img.shields.io/badge/Community%20Chat-Mattermost-%230058cc"/>
   </a>
-  <a href="https://github.com/btcpayserver/btcpayserver/releases/">
-    <img src="https://img.shields.io/github/v/release/btcpayserver/btcpayserver"/>
-  </a>  
   <a href="https://twitter.com/intent/follow?screen_name=btcpayserver">
-      <img src="https://img.shields.io/twitter/follow/btcpayserver.svg?label=Follow%20@btcpayserver"/>
+    <img src="https://img.shields.io/twitter/follow/btcpayserver.svg?label=Follow%20@btcpayserver"/>
   </a>
 </p>
 
