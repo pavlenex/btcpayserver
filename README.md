@@ -142,8 +142,8 @@ Here is some info about [how to extend the themes](https://docs.btcpayserver.org
 BTCPay Server has two API's:
 
 - **Greenfield API (New)**
- - [Greenfield API documentation](https://docs.btcpayserver.org/API/Greenfield/v1/)
- - [Greenfield API examples with CURL](https://docs.btcpayserver.org/GreenFieldExample/)
+  - [Greenfield API documentation](https://docs.btcpayserver.org/API/Greenfield/v1/)
+  - [Greenfield API examples with CURL](https://docs.btcpayserver.org/GreenFieldExample/)
 - **Legacy API**
 
 The **Greenfield API** is our brand-new API which is still in development. Once complete, it will allow you to run BTCPay Server heedlessly.
