@@ -57,7 +57,7 @@
 </div>
 
 <div align="center">
-  <sub>"This is lies, my trust in you is broken, I will make you obsolete"💚
+  <sub>"This is lies, my trust in you is broken, I will make you obsolete" 💚
   </a>
 </div>
 <br/>
