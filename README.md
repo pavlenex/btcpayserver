@@ -72,21 +72,7 @@
   <a href="https://docs.btcpayserver.org/FAQ/">FAQ</a>
 </p>
 
-## Introduction
-
-BTCPay Server is a free and open-source Bitcoin payment processor which allows you to accept Bitcoin payments - directly, with no fees, transaction cost or a middleman.
-
-Payments with BTCPay Server go directly to your wallet, which increases the privacy and security.
-
-The software is built in C# and conforms to the invoice [API of BitPay](https://bitpay.com/api). It allows for your website to be easily migrated from BitPay and configured as a self-hosted payment processor.
-
-You can run BTCPay Server as a self-hosted solution on your own server, or use a [third-party host](https://docs.btcpayserver.org/ThirdPartyHosting/).
-
-The self-hosted solution allows you not only to attach an unlimited number of stores and use the Lightning Network but also become the payment processor for others.
-
-[![What is BTCPay](https://img.youtube.com/vi/q7xJMno_B3U/sddefault.jpg)](https://www.youtube.com/watch?v=q7xJMno_B3U "What is BTCPay")
-
-## Table of Contents
+## 💼 Table of Contents
 
 * [Features](#features)
 * [Getting Started](#getting-started)
@@ -97,7 +83,7 @@ The self-hosted solution allows you not only to attach an unlimited number of st
 * [How to debug](#how-to-debug)
 * [Dependencies](#other-dependencies)
 
-## Features
+## 🎨 Features
 
 * Direct, peer-to-peer Bitcoin payments
 * No transaction fees (other than the [network fee](https://en.bitcoin.it/wiki/Miner_fees))
@@ -114,19 +100,19 @@ The self-hosted solution allows you not only to attach an unlimited number of st
 * Opt-in [altcoin](https://docs.btcpayserver.org/FAQ/FAQ-Altcoin/) integrations
 * Full compatibility with BitPay API (easy migration)
 * Process payments for others
-* Easy-embeddable Payment buttons
+* Easy-embeddable payment buttons
 * Point of sale app
 * Crowdfunding app
 * Payment Requests
 * Internal, full-node reliant wallet with [hardware wallet integration](https://docs.btcpayserver.org/Vault/)
 
-## Getting Started
+## 🚀 Getting Started
 
 Firstly, decide if you want to host an instance yourself or use a [third-party host](https://docs.btcpayserver.org/ThirdPartyHosting/). If you've chosen to self-host, we documented plenty [ways to deploy BTCPay Server](https://docs.btcpayserver.org/Deployment/).
 
 After successful deployment, make sure to check our [getting started](https://docs.btcpayserver.org/RegisterAccount/) and [walkthrough](https://docs.btcpayserver.org/Walkthrough/) guides. In case you would like to use Lightning Network, see [Lightning guide](https://docs.btcpayserver.org/LightningNetwork/).
 
-## Documentation
+## 📗 Documentation
 
 Please check out our [official website](https://btcpayserver.org/), our [complete documentation](https://docs.btcpayserver.org/) and [FAQ](https://docs.btcpayserver.org/FAQ/) for more details.
 
@@ -134,7 +120,7 @@ If you have trouble using BTCPay, consider joining [communities listed on offici
 
 Main community chat is located on [Mattermost](https://chat.btcpayserver.org/).
 
-## Contributing
+## 🤝 Contributing
 
 BTCPay is built and maintained entirely by volunteer contributors around the internet. We welcome and appreciate new contributions.
 
@@ -150,6 +136,18 @@ You also have an awesome video of our contributors which explains how to get sta
 [![Rockstar Dev and Britt Kelly - BTCPay Server Code Along](https://img.youtube.com/vi/ZePbMPSIvHM/sddefault.jpg)](https://www.youtube.com/embed/VNMnd-dX9Q8)
 
 Here is some info about [how to extend the themes](https://docs.btcpayserver.org/Theme/).
+
+### 👨‍💻 API
+
+BTCPay Server has two API's:
+
+- **Greenfield API (New)**
+ - [Greenfield API documentation](https://docs.btcpayserver.org/API/Greenfield/v1/)
+ - [Greenfield API examples with CURL](https://docs.btcpayserver.org/GreenFieldExample/)
+- **Legacy API**
+
+The **Greenfield API** is our brand-new API which is still in development. Once complete, it will allow you to run BTCPay Server heedlessly.
+The **legacy API**, is fully compatible with [BitPay's API](https://bitpay.com/api/). It has limited features, but allows instant migration from BitPay.
 
 ## How to build
 
@@ -171,7 +169,7 @@ On linux:
 
 ## How to run
 
-Use the `run` scripts to run BTCPayServer, this example shows how to print the available command line arguments of BTCPayServer.
+Use the `run` scripts to run BTCPay Server, this example shows how to print the available command line arguments of BTCPay Server.
 
 On Powershell:
 
@@ -205,17 +203,17 @@ Then use the `Docker-Regtest-https` debug profile.
 ## Other dependencies
 
 For more information, see the documentation:
-[How to deploy a BTCPay server instance](https://docs.btcpayserver.org/Deployment/).
+[How to deploy a BTCPay Server instance](https://docs.btcpayserver.org/Deployment/).
 
-## Supported altcoins
+## 💩 Supported altcoins
 
 Bitcoin is the only focus of the project and its core developers. However, opt in integrations are present for [several altcoins](https://docs.btcpayserver.org/FAQ/FAQ-Altcoin/). Altcoins are maintained by their respective communities.
 
-## License
+## 📝 License
 
 BTCPay Server software, logo and designs are provided under [MIT License](https://github.com/btcpayserver/btcpayserver/blob/master/LICENSE).
 
-## Supporters
+## 💚 Supporters
 
 The BTCPay Server Project is proudly supported by these entities through the [BTCPay Server Foundation](https://foundation.btcpayserver.org/).
 
