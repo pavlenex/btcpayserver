@@ -209,10 +209,22 @@ For more information, see the documentation:
 
 ## 💚 Community
 
-Our community is the heart of the project.
-- 
+Our community is ❤️ of the project.
+
+The Next.js community can be found on GitHub Discussions, where you can ask questions, voice ideas, and share your projects.
+
+To chat with other community members you can join the Next.js Discord.
+
+Community chat
+Discussions
+Paid support
+
 
 ## Bug report and feature requests
+
+### Bug report
+
+### Feature request
 
 ## 📝 License
 
