@@ -1,5 +1,3 @@
-
-
 # BTCPay Server
 
 ![BTCPay Server](BTCPayServer/wwwroot/img/btc_pay_BG_twitter.png)
@@ -23,25 +21,6 @@
     <img src="https://img.shields.io/twitter/follow/btcpayserver.svg?label=Follow%20@btcpayserver" alt="Follow @btcpayserver" />
   </a>
 </p>
-
-[![Docker Automated build](https://img.shields.io/docker/automated/jrottenberg/ffmpeg.svg)](https://hub.docker.com/r/btcpayserver/btcpayserver/)
-
-
-<h3 align="center">
-  <a href="https://docs.btcpayserver.org/">Documentation</a>
-  <span> · </span>
-  <a href="https://docs.btcpayserver.org/Deployment/">Launch BTCPay</a>
-  <span> · </span>
-  <a href="https://docs.btcpayserver.org/RegisterAccount/">Getting Started</a>
-  <span> · </span>
-  <a href="https://docs.btcpayserver.org/API/Greenfield/v1/">API</a>
-  <span> · </span>
-  <a href="https://github.com/btcpayserver/btcpayserver#Contributing">Contribute</a>
-  <span> · </span>
-  <a href="https://chat.btcpayserver.org/>Support Chat</a>
-  <span> & </span>
-  <a href="https://github.com/btcpayserver/btcpayserver/discussions">Discussion Forum</a>
-</h3>
 
 ## Introduction
 
