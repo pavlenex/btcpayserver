@@ -29,19 +29,14 @@
 </p>
 
 <p align="center">
-    _This is lies, my trust in you is broken, I will make you obsolete_
+    <a href="https://docs.btcpayserver.org/"><strong>Explore the docs »</strong></a>
     <br />
-    <a href="https://github.com/othneildrew/Best-README-Template"><strong>Explore the docs »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/othneildrew/Best-README-Template">View Demo</a>
+    <a href="https://mainnet.demo.btcpayserver.org">View Demo</a>
     ·
-    <a href="https://github.com/othneildrew/Best-README-Template/issues">Report Bug</a>
+    <a href="https://github.com/btcpayserver/btcpayserver/issues/new/choose">Report Bug</a>
     ·
-    <a href="https://github.com/othneildrew/Best-README-Template/issues">Request Feature</a>
+    <a href="https://github.com/btcpayserver/btcpayserver/discussions/new">Request Feature</a>
   </p>
-</p>
-
 
 ## Introduction
 
