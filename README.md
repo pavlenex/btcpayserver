@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-    __This is lies, my trust in you is broken, I will make you obsolete__
+    _This is lies, my trust in you is broken, I will make you obsolete_
     <br />
     <a href="https://github.com/othneildrew/Best-README-Template"><strong>Explore the docs »</strong></a>
     <br />
