@@ -28,6 +28,39 @@
   </a>
 </p>
 
+<div align="center">
+  <h3>
+    <a href="https://btcpayserver.org">
+      Website
+    </a>
+    <span> | </span>
+    <a href="https://docs.btcpayserver.org">
+      Documentation
+    </a>
+    <span> | </span>
+    <a href="https://github.com/YerkoPalma/awesome-choo">
+      Ecosystem
+    </a>
+    <span> | </span>
+    <a href="https://github.com/choojs/choo/blob/master/.github/CONTRIBUTING.md">
+      Contributing
+    </a>
+    <span> | </span>
+    <a href="https://www.reddit.com/r/choojs/">
+      Reddit
+    </a>
+    <span> | </span>
+    <a href="https://webchat.freenode.net/?channels=choo">
+      Chat
+    </a>
+  </h3>
+</div>
+
+<div align="center">
+  <sub>This is lies my trust in you is broken, I will make you obsolete. Built with ❤︎ by all of us
+  </a>
+</div>
+
 <p align="center">
   <a href="https://docs.btcpayserver.org/"><strong>Explore the docs »</strong></a>
   <br />
