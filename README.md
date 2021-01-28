@@ -29,15 +29,20 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.btcpayserver.org/"><strong>Explore the docs »</strong></a>
-    <br />
-    <br />
-    <a href="https://mainnet.demo.btcpayserver.org">View Demo</a>
-    ·
-    <a href="https://github.com/btcpayserver/btcpayserver/issues/new/choose">Report Bug</a>
-    ·
-    <a href="https://github.com/btcpayserver/btcpayserver/discussions/new">Request Feature</a>
-  </p>
+  <a href="https://docs.btcpayserver.org/"><strong>Explore the docs »</strong></a>
+  <br />
+  <br />
+  <a href="https://btcpayserver.org">Website</a>
+  ·
+  <a href="https://mainnet.demo.btcpayserver.org">View Demo</a>
+  ·
+  <a href="https://github.com/btcpayserver/btcpayserver/issues/new/choose">Report a bug</a>
+  ·
+  <a href="https://github.com/btcpayserver/btcpayserver/discussions/new">Request a feature</a>
+  ·
+  <a href="https://docs.btcpayserver.org/FAQ/">FAQ</a>
+
+</p>
 
 ## Introduction
 
