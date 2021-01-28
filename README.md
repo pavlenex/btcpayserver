@@ -61,7 +61,6 @@
   </a>
 </div>
 <br/>
-<br/>
 
 <p align="center">
   <a href="https://mainnet.demo.btcpayserver.org">View Demo</a>
