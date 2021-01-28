@@ -1,25 +1,59 @@
 
-![BTCPay Server](BTCPayServer/wwwroot/img/btc_pay_BG_twitter.png)
-
-[![Docker Automated build](https://img.shields.io/docker/automated/jrottenberg/ffmpeg.svg)](https://hub.docker.com/r/btcpayserver/btcpayserver/)
-[![Deploy to Azure](https://azuredeploy.net/deploybutton.svg)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fbtcpayserver%2Fbtcpayserver-azure%2Fmaster%2Fazuredeploy.json)
-[![CircleCI](https://circleci.com/gh/btcpayserver/btcpayserver.svg?style=svg)](https://circleci.com/gh/btcpayserver/btcpayserver)
 
 # BTCPay Server
 
+![BTCPay Server](BTCPayServer/wwwroot/img/btc_pay_BG_twitter.png)
+
+<h3 align="center">
+  Accept Bitcoin payments ₿
+</h3>
+<p align="center"> BTCPay Server is a free and open-source Bitcoin payment processor which allows you to accept bitcoin without fees or intermediary.
+</p>
+<p align="center">
+  <a href="https://github.com/btcpayserver/btcpayserver/blob/master/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="BTCPay Server is released under the MIT license." />
+  </a>
+  <a href="https://circleci.com/gh/btcpayserver/btcpayserver">
+    <img src="https://circleci.com/gh/btcpayserver/btcpayserver/btcpayserver.svg?style=shield" alt="Current CircleCI build status." />
+  </a>
+  <a href="https://hub.docker.com/r/btcpayserver/btcpayserver/">
+    <img src="https://circleci.com/gh/btcpayserver/btcpayserver/btcpayserver.svg?style=shield" alt="Current CircleCI build status." />
+  </a>
+  <a href="https://docs.btcpayserver.org/Contribute/">
+    <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome!" />
+  </a>
+  <a href="https://twitter.com/intent/follow?screen_name=btcpayserver">
+    <img src="https://img.shields.io/twitter/follow/btcpayserver.svg?label=Follow%20@btcpayserver" alt="Follow @btcpayserver" />
+  </a>
+</p>
+
+<h3 align="center">
+  <a href="https://docs.btcpayserver.org/">Documentation</a>
+  <span> · </span>
+  <a href="https://docs.btcpayserver.org/Deployment/">Launch BTCPay</a>
+  <span> · </span>
+  <a href="https://docs.btcpayserver.org/RegisterAccount/">Getting Started</a>
+  <span> · </span>
+  <a href="https://docs.btcpayserver.org/API/Greenfield/v1/">API</a>
+  <span> · </span>
+  <a href="https://github.com/btcpayserver/btcpayserver#Contributing">Contribute</a>
+  <span> · </span>
+  <a href="https://chat.btcpayserver.org/>Support Chat</a>
+  <span> & </span>
+  <a href="https://github.com/btcpayserver/btcpayserver/discussions">Discussion Forum</a>
+</h3>
+
 ## Introduction
 
-BTCPay Server is a free and open-source cryptocurrency payment processor which allows you to receive payments in Bitcoin and altcoins directly, with no fees, transaction cost or a middleman.
+BTCPay Server is a free and open-source Bitcoin payment processor which allows you to accept Bitcoin payments - directly, with no fees, transaction cost or a middleman.
 
-BTCPay Server is a non-custodial invoicing system which eliminates the involvement of a third-party. Payments with BTCPay Server go directly to your wallet, which increases the privacy and security. Your private keys are never uploaded to the server. There is no address re-use, since each invoice generates a new address deriving from your xpubkey.
+Payments with BTCPay Server go directly to your wallet, which increases the privacy and security.
 
 The software is built in C# and conforms to the invoice [API of BitPay](https://bitpay.com/api). It allows for your website to be easily migrated from BitPay and configured as a self-hosted payment processor.
 
 You can run BTCPay Server as a self-hosted solution on your own server, or use a [third-party host](https://docs.btcpayserver.org/ThirdPartyHosting/).
 
 The self-hosted solution allows you not only to attach an unlimited number of stores and use the Lightning Network but also become the payment processor for others.
-
-Thanks to the [apps](https://docs.btcpayserver.org/Apps/) built on top of it, you can use BTCPay to receive donations, start a crowdfunding campaign or have an in-store Point of Sale.
 
 [![What is BTCPay](https://img.youtube.com/vi/q7xJMno_B3U/sddefault.jpg)](https://www.youtube.com/watch?v=q7xJMno_B3U "What is BTCPay")
 
