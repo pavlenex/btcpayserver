@@ -13,9 +13,6 @@
   <a href="https://github.com/btcpayserver/btcpayserver/blob/master/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="BTCPay Server is released under the MIT license." />
   </a>
-  <a href="https://circleci.com/gh/btcpayserver/btcpayserver">
-    <img src="https://circleci.com/gh/btcpayserver/btcpayserver/btcpayserver.svg?style=shield" alt="Current CircleCI build status." />
-  </a>
   <a href="https://hub.docker.com/r/btcpayserver/btcpayserver/">
     <img src="https://circleci.com/gh/btcpayserver/btcpayserver/btcpayserver.svg?style=shield" alt="Current CircleCI build status." />
   </a>
@@ -26,6 +23,9 @@
     <img src="https://img.shields.io/twitter/follow/btcpayserver.svg?label=Follow%20@btcpayserver" alt="Follow @btcpayserver" />
   </a>
 </p>
+
+[![Docker Automated build](https://img.shields.io/docker/automated/jrottenberg/ffmpeg.svg)](https://hub.docker.com/r/btcpayserver/btcpayserver/)
+
 
 <h3 align="center">
   <a href="https://docs.btcpayserver.org/">Documentation</a>
