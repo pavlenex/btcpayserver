@@ -74,15 +74,15 @@
 
 ## 💼 Table of Contents
 
-* [Features](#features)
-* [Getting Started](#getting-started)
-* [Documentation](#documentation)
-* [Contributing](#Contributing)
-* [Developing](#developing)
-  * [API](#API)
-* [Community](#Community)
-* [License](#License)
-* [Supporters](#Supporters)
+* [Features](#-features)
+* [Getting Started](#-getting-started)
+* [Documentation](#-documentation)
+* [Contributing](#-contributing)
+* [Developing](#-developing)
+  * [API](#-api)
+* [Community](#-community)
+* [License](#-license)
+* [Supporters](#-supporters)
 
 ## 🎨 Features
 
@@ -134,18 +134,6 @@ To begin developing locally, visit [local development guide](https://docs.btcpay
 * [Setting up development environment on Windows](https://www.youtube.com/watch?v=ZePbMPSIvHM)
 * [Setting up development environment Linux (Ubuntu)](https://www.youtube.com/watch?v=j486T_Rk-yw&t)
 * [Setting up development environment MacOS](https://www.youtube.com/watch?v=GWR_CcMsEV0)
-
-### 🧪 API
-
-BTCPay Server has two API:
-
-- **Greenfield API (New)**
-  - [Greenfield API documentation](https://docs.btcpayserver.org/API/Greenfield/v1/)
-  - [Greenfield API examples with CURL](https://docs.btcpayserver.org/GreenFieldExample/)
-- **Legacy API**
-
-The **Greenfield API** is our brand-new API which is still in development. Once complete, it will allow you to run BTCPay Server heedlessly.
-The **legacy API**, is fully compatible with [BitPay's API](https://bitpay.com/api/). It has limited features, but allows instant migration from BitPay.
 
 ### How to build
 
@@ -201,6 +189,22 @@ Then use the `Docker-Regtest-https` debug profile.
 
 For more information, see the documentation:
 [How to deploy a BTCPay Server instance](https://docs.btcpayserver.org/Deployment/).
+
+### 🧪 API
+
+BTCPay Server has two API:
+
+- **Greenfield API (New)**
+  - [Greenfield API documentation](https://docs.btcpayserver.org/API/Greenfield/v1/)
+  - [Greenfield API examples with CURL](https://docs.btcpayserver.org/GreenFieldExample/)
+- **Legacy API**
+
+The **Greenfield API** is our brand-new API which is still in development. Once complete, it will allow you to run BTCPay Server heedlessly.
+The **legacy API**, is fully compatible with [BitPay's API](https://bitpay.com/api/). It has limited features, but allows instant migration from BitPay.
+
+## 💚 Community
+
+Our community is ❤️ of the project. To chat with other community members in real-time, join our [Mattermost chat](https://chat.btcpayserver.org). We're also on [GitHub discussions](https://github.com/btcpayserver/btcpayserver/discussions).
 
 ## 📝 License
 
@@ -283,23 +287,3 @@ The BTCPay Server Project is proudly supported by these entities through the [BT
 </table>
 
 If you'd like to support the project, please visit the [donation page](https://btcpayserver.org/donate/).
-
-
-## 💚 Community
-
-Our community is ❤️ of the project.
-
-The Next.js community can be found on GitHub Discussions, where you can ask questions, voice ideas, and share your projects.
-
-To chat with other community members you can join the Next.js Discord.
-
-Community chat
-Discussions
-Paid support
-
-
-## Bug report and feature requests
-
-### Bug report
-
-### Feature request
