@@ -84,6 +84,8 @@
 * [License](#-license)
 * [Supporters](#-supporters)
 
+![](https://raw.githubusercontent.com/btcpayserver/btcpayserver-doc/master/docs/img/BTCPayServerScreenshot.png)
+
 ## 🎨 Features
 
 * Direct, peer-to-peer Bitcoin payments
