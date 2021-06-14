@@ -242,6 +242,9 @@ The BTCPay Server Project is proudly supported by these entities through the [BT
           <br/>
           <span>ACINQ</span>
         </a>
+      </td>
+      </tr>
+      <tr>
       <td align="center" valign="middle">
         <a href="https://lunanode.com" target="_blank">
           <img  src="BTCPayServer/wwwroot/img/lunanode.svg" alt="LunaNode" height=100>
