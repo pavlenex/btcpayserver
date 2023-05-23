@@ -19,7 +19,7 @@ namespace BTCPayServer
             var bg = ColorTranslator.FromHtml(bgColor);
             int bgDelta = Convert.ToInt32((bg.R * 0.299) + (bg.G * 0.587) + (bg.B * 0.114));
             Color color = (255 - bgDelta < nThreshold) ? Color.Black : Color.White;
-            return ColorTranslator.ToHtml(color);
+            return ColorTranslator.ToHtml(color).ToLowerInvariant();
         }
         // Borrowed from https://github.com/ManageIQ/guides/blob/master/labels.md
         public static readonly ColorPalette Default = new ColorPalette(new string[] {
@@ -59,7 +59,7 @@ namespace BTCPayServer
                     return Labels[num % Labels.Length];
             }
         }
-        
+
         /// https://gist.github.com/zihotki/09fc41d52981fb6f93a81ebf20b35cd5
         /// <summary>
         /// Creates color with corrected brightness.
@@ -92,7 +92,7 @@ namespace BTCPayServer
 
             return Color.FromArgb(color.A, (int)red, (int)green, (int)blue);
         }
-        
+
         public string AdjustBrightness(string html, float correctionFactor)
         {
             var color = AdjustBrightness(ColorTranslator.FromHtml(html), correctionFactor);

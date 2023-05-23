@@ -39,10 +39,12 @@ namespace BTCPayServer.Controllers
 
         [HttpGet("create")]
         [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettingsUnscoped)]
-        public IActionResult CreateStore()
+        public async Task<IActionResult> CreateStore()
         {
+            var stores = await _repo.GetStoresByUserId(GetUserId());
             var vm = new CreateStoreViewModel
             {
+                IsFirstStore = !stores.Any(),
                 DefaultCurrency = StoreBlob.StandardDefaultCurrency,
                 Exchanges = GetExchangesSelectList(null)
             };
@@ -56,13 +58,19 @@ namespace BTCPayServer.Controllers
         {
             if (!ModelState.IsValid)
             {
+                var stores = await _repo.GetStoresByUserId(GetUserId());
+                vm.IsFirstStore = !stores.Any();
                 vm.Exchanges = GetExchangesSelectList(vm.PreferredExchange);
                 return View(vm);
             }
 
-            var store = await _repo.CreateStore(GetUserId(), vm.Name, vm.DefaultCurrency, vm.PreferredExchange);
+            var store = new StoreData { StoreName = vm.Name };
+            var blob = store.GetStoreBlob();
+            blob.DefaultCurrency = vm.DefaultCurrency;
+            blob.PreferredExchange = vm.PreferredExchange;
+            store.SetStoreBlob(blob);
+            await _repo.CreateStore(GetUserId(), store);
             CreatedStoreId = store.Id;
-
             TempData[WellKnownTempData.SuccessMessage] = "Store successfully created";
             return RedirectToAction(nameof(UIStoresController.Dashboard), "UIStores", new
             {

@@ -385,9 +385,11 @@ namespace BTCPayServer.Controllers
                     };
             }).ToList();
 
-            vm.UseNewCheckout = storeBlob.CheckoutType == Client.Models.CheckoutType.V2;
+            vm.UseClassicCheckout = storeBlob.CheckoutType == Client.Models.CheckoutType.V1;
             vm.CelebratePayment = storeBlob.CelebratePayment;
             vm.OnChainWithLnInvoiceFallback = storeBlob.OnChainWithLnInvoiceFallback;
+            vm.ShowPayInWalletButton = storeBlob.ShowPayInWalletButton;
+            vm.ShowStoreHeader = storeBlob.ShowStoreHeader;
             vm.LightningAmountInSatoshi = storeBlob.LightningAmountInSatoshi;
             vm.RequiresRefundEmail = storeBlob.RequiresRefundEmail;
             vm.LazyPaymentMethods = storeBlob.LazyPaymentMethods;
@@ -505,7 +507,9 @@ namespace BTCPayServer.Controllers
                 });
             }
 
-            blob.CheckoutType = model.UseNewCheckout ? Client.Models.CheckoutType.V2 : Client.Models.CheckoutType.V1;
+            blob.ShowPayInWalletButton = model.ShowPayInWalletButton;
+            blob.ShowStoreHeader = model.ShowStoreHeader;
+            blob.CheckoutType = model.UseClassicCheckout ? Client.Models.CheckoutType.V1 : Client.Models.CheckoutType.V2;
             blob.CelebratePayment = model.CelebratePayment;
             blob.OnChainWithLnInvoiceFallback = model.OnChainWithLnInvoiceFallback;
             blob.LightningAmountInSatoshi = model.LightningAmountInSatoshi;
@@ -607,6 +611,7 @@ namespace BTCPayServer.Controllers
                 Id = store.Id,
                 StoreName = store.StoreName,
                 StoreWebsite = store.StoreWebsite,
+                StoreSupportUrl = storeBlob.StoreSupportUrl,
                 LogoFileId = storeBlob.LogoFileId,
                 CssFileId = storeBlob.CssFileId,
                 BrandColor = storeBlob.BrandColor,
@@ -642,6 +647,7 @@ namespace BTCPayServer.Controllers
             }
 
             var blob = CurrentStore.GetStoreBlob();
+            blob.StoreSupportUrl = model.StoreSupportUrl;
             blob.AnyoneCanInvoice = model.AnyoneCanCreateInvoice;
             blob.NetworkFeeMode = model.NetworkFeeMode;
             blob.PaymentTolerance = model.PaymentTolerance;
@@ -726,7 +732,7 @@ namespace BTCPayServer.Controllers
                     {
                         await _fileService.RemoveFile(blob.CssFileId, userId);
                     }
-                    
+
                     // add new CSS file
                     try
                     {
@@ -883,8 +889,11 @@ namespace BTCPayServer.Controllers
             var userId = GetUserId();
             if (userId == null)
                 return Challenge(AuthenticationSchemes.Cookie);
-            storeId = model.StoreId;
-            var store = CurrentStore ?? await _Repo.FindStore(storeId, userId);
+            var store = model.StoreId switch
+            {
+                null => CurrentStore,
+                string id => await _Repo.FindStore(storeId, userId)
+            };
             if (store == null)
                 return Challenge(AuthenticationSchemes.Cookie);
             var tokenRequest = new TokenRequest()
@@ -902,7 +911,7 @@ namespace BTCPayServer.Controllers
                     Id = tokenRequest.PairingCode,
                     Label = model.Label,
                 });
-                await _TokenRepository.PairWithStoreAsync(tokenRequest.PairingCode, storeId);
+                await _TokenRepository.PairWithStoreAsync(tokenRequest.PairingCode, store.Id);
                 pairingCode = tokenRequest.PairingCode;
             }
             else

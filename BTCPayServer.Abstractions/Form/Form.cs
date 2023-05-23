@@ -32,6 +32,8 @@ public class Form
     // Are all the fields valid in the form?
     public bool IsValid()
     {
+        if (TopMessages?.Any(t => t.Type == AlertMessage.AlertMessageType.Danger) is true)
+            return false;
         return Fields.Select(f => f.IsValid()).All(o => o);
     }
 
@@ -67,7 +69,6 @@ public class Form
             if (!nameReturned.Add(fullName))
             {
                 errors.Add($"Form contains duplicate field names '{fullName}'");
-                continue;
             }
         }
         return errors.Count == 0;
@@ -84,15 +85,10 @@ public class Form
                 thisPath.Add(field.Name);
                 yield return (thisPath, field);
             }
-
-            foreach (var child in field.Fields)
+            foreach (var descendant in GetAllFieldsCore(thisPath, field.Fields))
             {
-                if (field.Constant)
-                    child.Constant = true;
-                foreach (var descendant in GetAllFieldsCore(thisPath, field.Fields))
-                {
-                    yield return descendant;
-                }
+                descendant.Field.Constant = field.Constant || descendant.Field.Constant;
+                yield return descendant;
             }
         }
     }
@@ -135,25 +131,5 @@ public class Form
         }
     }
 
-    public JObject GetValues()
-    {
-        var r = new JObject();
-        foreach (var f in GetAllFields())
-        {
-            var node = r;
-            for (int i = 0; i < f.Path.Count - 1; i++)
-            {
-                var p = f.Path[i];
-                var child = node[p] as JObject;
-                if (child is null)
-                {
-                    child = new JObject();
-                    node[p] = child;
-                }
-                node = child;
-            }
-            node[f.Field.Name] = f.Field.Value;
-        }
-        return r;
-    }
+
 }

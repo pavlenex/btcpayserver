@@ -36,8 +36,11 @@ Vue.directive('collapsible', {
     }
 });
 
-const STATUS_PAID = ['complete', 'confirmed', 'paid'];
-const STATUS_UNPAYABLE =  ['expired', 'invalid'];
+// These are the legacy states, see InvoiceEntity
+const STATUS_PAYABLE = ['new'];
+const STATUS_PAID = ['paid'];
+const STATUS_SETTLED = ['complete', 'confirmed'];
+const STATUS_INVALID =  ['expired', 'invalid'];
 const urlParams = new URLSearchParams(window.location.search);
 
 function computeStartingLanguage() {
@@ -59,7 +62,11 @@ function updateLanguageSelect() {
     $languageSelect.parentElement.appendChild(element);
     const width = element.offsetWidth;
     $languageSelect.parentElement.removeChild(element);
-    $languageSelect.style.setProperty('--text-width', `${width}px`);
+    if (width && width > 0) {
+        $languageSelect.style.setProperty('--text-width', `${width}px`);
+    } else { // in case of modal this might not be rendered properly yet
+        window.requestAnimationFrame(updateLanguageSelect);
+    }
 }
 
 function updateLanguage(lang) {
@@ -82,21 +89,11 @@ const PaymentDetails = {
     template: '#payment-details',
     props: {
         srvModel: Object,
-        isActive: Boolean
-    },
-    computed: {
-        orderAmount () {
-            return parseFloat(this.srvModel.orderAmount);
-        },
-        btcDue () {
-            return parseFloat(this.srvModel.btcDue);
-        },
-        btcPaid () {
-            return parseFloat(this.srvModel.btcPaid);
-        },
-        showRecommendedFee () {
-            return this.isActive && this.srvModel.showRecommendedFee && this.srvModel.feeRate;
-        },
+        isActive: Boolean,
+        showRecommendedFee: Boolean,
+        orderAmount: Number,
+        btcPaid: Number,
+        btcDue: Number
     }
 }
 
@@ -118,18 +115,25 @@ function initApp() {
                 emailAddressInputInvalid: false,
                 paymentMethodId: null,
                 endData: null,
-                isModal: srvModel.isModal
+                isModal: srvModel.isModal,
+                pollTimeoutID: null
             }
         },
         computed: {
-            isUnpayable () {
-                return STATUS_UNPAYABLE.includes(this.srvModel.status);
+            isInvalid () {
+                return STATUS_INVALID.includes(this.srvModel.status);
             },
-            isPaid () {
+            isSettled () {
+                return STATUS_SETTLED.includes(this.srvModel.status);
+            },
+            isProcessing () {
                 return STATUS_PAID.includes(this.srvModel.status);
             },
             isActive () {
-                return !this.isUnpayable && !this.isPaid;
+                return STATUS_PAYABLE.includes(this.srvModel.status);
+            },
+            isPaidPartial () {
+                return this.btcPaid > 0 && this.btcDue > 0;
             },
             showInfo () {
                 return this.showTimer || this.showPaymentDueInfo;
@@ -138,19 +142,19 @@ function initApp() {
                 return this.isActive && this.remainingSeconds < this.srvModel.displayExpirationTimer;
             },
             showPaymentDueInfo () {
-                return this.btcPaid > 0 && this.btcDue > 0;
+                return this.isPaidPartial;
             },
             showRecommendedFee () {
-                return this.isActive() && this.srvModel.showRecommendedFee && this.srvModel.feeRate;
+                return this.isActive && this.srvModel.showRecommendedFee && this.srvModel.feeRate;
             },
             orderAmount () {
-                return parseFloat(this.srvModel.orderAmount);
+                return this.asNumber(this.srvModel.orderAmount);
             },
             btcDue () {
-                return parseFloat(this.srvModel.btcDue);
+                return this.asNumber(this.srvModel.btcDue);
             },
             btcPaid () {
-                return parseFloat(this.srvModel.btcPaid);
+                return this.asNumber(this.srvModel.btcPaid);
             },
             pmId () {
                 return this.paymentMethodId || this.srvModel.paymentMethodId;
@@ -181,13 +185,31 @@ function initApp() {
             },
             isPluginPaymentMethod () {
                 return !this.paymentMethodIds.includes(this.pmId);
+            },
+            realCryptoCode () {
+                return this.srvModel.cryptoCode.toLowerCase() === 'sats' ? 'BTC' : this.srvModel.cryptoCode;
             }
         },
         watch: {
-            isPaid: function (newValue, oldValue) {
+            isProcessing: function (newValue, oldValue) {
+                if (newValue === true && oldValue === false) {
+                    // poll from here on
+                    this.listenForConfirmations();
+                    // celebration!
+                    const self = this;
+                    Vue.nextTick(function () {
+                        self.celebratePayment(5000);
+                    });
+                }
+            },
+            isSettled: function (newValue, oldValue) {
                 if (newValue === true && oldValue === false) {
                     const duration = 5000;
                     const self = this;
+                    // stop polling
+                    if (this.pollTimeoutID) {
+                        clearTimeout(this.pollTimeoutID);
+                    }
                     // celebration!
                     Vue.nextTick(function () {
                         self.celebratePayment(duration);
@@ -208,8 +230,11 @@ function initApp() {
         mounted () {
             this.updateData(this.srvModel);
             this.updateTimer();
-            if (this.isActive) {
+            if (this.isActive || this.isProcessing) {
                 this.listenIn();
+            }
+            if (this.isProcessing) {
+                this.listenForConfirmations();
             }
             updateLanguageSelect();
             window.parent.postMessage('loaded', '*');
@@ -223,6 +248,9 @@ function initApp() {
             },
             changeLanguage (e) {
                 updateLanguage(e.target.value);
+            },
+            asNumber (val) {
+                return parseFloat(val.replace(/\s/g, '')); // e.g. sats are formatted with spaces: 1 000 000
             },
             padTime (val) {
                 return val.toString().padStart(2, '0');
@@ -257,13 +285,26 @@ function initApp() {
                     }
                 }
                 // fallback in case there is no websocket support
-                (function watcher() {
-                    setTimeout(async function () {
-                        if (socket === null || socket.readyState !== 1) {
+                if (!socket || socket.readyState !== 1) {
+                    this.pollUpdates(2000, socket)
+                }
+            },
+            listenForConfirmations () {
+                this.pollUpdates(30000);
+            },
+            pollUpdates (interval, socket) {
+                const self = this;
+                const updateFn = this.fetchData;
+                if (self.pollTimeoutID) {
+                    clearTimeout(self.pollTimeoutID);
+                }
+                (function pollFn() {
+                    self.pollTimeoutID = setTimeout(async function () {
+                        if (!socket || socket.readyState !== 1) {
                             await updateFn();
+                            pollFn();
                         }
-                        watcher();
-                    }, 2000);
+                    }, interval);
                 })();
             },
             async fetchData () {
@@ -282,7 +323,6 @@ function initApp() {
                     const { status } = data;
                     window.parent.postMessage({ invoiceId, status }, '*');
                 }
-                
                 const newEnd = new Date();
                 newEnd.setSeconds(newEnd.getSeconds() + data.expirationSeconds);
                 this.endDate = newEnd;
