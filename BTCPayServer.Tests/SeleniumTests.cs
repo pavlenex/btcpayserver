@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
@@ -1741,12 +1742,12 @@ namespace BTCPayServer.Tests
             {
                 s.Driver.Navigate().Refresh();
                 Assert.Contains("transaction-label", s.Driver.PageSource);
+                var labels = s.Driver.FindElements(By.CssSelector("#WalletTransactionsList tr:first-child div.transaction-label"));
+                Assert.Equal(2, labels.Count);
+                Assert.Contains(labels, element => element.Text == "payout");
+                Assert.Contains(labels, element => element.Text == "pull-payment");
             });
-            var labels = s.Driver.FindElements(By.CssSelector("#WalletTransactionsList tr:first-child div.transaction-label"));
-            Assert.Equal(2, labels.Count);
-            Assert.Contains(labels, element => element.Text == "payout");
-            Assert.Contains(labels, element => element.Text == "pull-payment");
-
+            
             s.GoToStore(s.StoreId, StoreNavPages.Payouts);
             s.Driver.FindElement(By.Id($"{PayoutState.InProgress}-view")).Click();
             ReadOnlyCollection<IWebElement> txs;
@@ -1930,8 +1931,7 @@ namespace BTCPayServer.Tests
 
             Assert.Contains(PayoutState.AwaitingPayment.GetStateString(), s.Driver.PageSource);
 
-            //lnurl-w support check
-
+            // LNURL Withdraw support check with BTC denomination
             s.GoToStore(s.StoreId, StoreNavPages.PullPayments);
             s.Driver.FindElement(By.Id("NewPullPayment")).Click();
             s.Driver.FindElement(By.Id("Name")).SendKeys("PP1");
@@ -1998,6 +1998,42 @@ namespace BTCPayServer.Tests
                 Assert.Contains(bolt2.BOLT11, s.Driver.PageSource);
 
                 Assert.Contains(PayoutState.AwaitingApproval.GetStateString(), s.Driver.PageSource);
+            });
+            
+            // LNURL Withdraw support check with SATS denomination
+            s.GoToStore(s.StoreId, StoreNavPages.PullPayments);
+            s.Driver.FindElement(By.Id("NewPullPayment")).Click();
+            s.Driver.FindElement(By.Id("Name")).SendKeys("PP SATS");
+            s.Driver.SetCheckbox(By.Id("AutoApproveClaims"), true);
+            s.Driver.FindElement(By.Id("Amount")).Clear();
+            s.Driver.FindElement(By.Id("Amount")).SendKeys("21021");
+            s.Driver.FindElement(By.Id("Currency")).Clear();
+            s.Driver.FindElement(By.Id("Currency")).SendKeys("SATS" + Keys.Enter);
+            s.FindAlertMessage(StatusMessageModel.StatusSeverity.Success);
+            s.Driver.FindElement(By.LinkText("View")).Click();
+            s.Driver.FindElement(By.CssSelector("#lnurlwithdraw-button")).Click();
+            lnurl = new Uri(LNURL.LNURL.Parse(s.Driver.FindElement(By.Id("qr-code-data-input")).GetAttribute("value"), out _).ToString().Replace("https", "http"));
+            s.Driver.FindElement(By.CssSelector("button[data-bs-dismiss='modal']")).Click();
+            var amount = new LightMoney(21021, LightMoneyUnit.Satoshi);
+            info = Assert.IsType<LNURLWithdrawRequest>(await LNURL.LNURL.FetchInformation(lnurl, s.Server.PayTester.HttpClient));
+            Assert.Equal(amount, info.MaxWithdrawable);
+            Assert.Equal(amount, info.CurrentBalance);
+            info = Assert.IsType<LNURLWithdrawRequest>(await LNURL.LNURL.FetchInformation(info.BalanceCheck, s.Server.PayTester.HttpClient));
+            Assert.Equal(amount, info.MaxWithdrawable);
+            Assert.Equal(amount, info.CurrentBalance);
+
+            bolt2 = (await s.Server.CustomerLightningD.CreateInvoice(
+                amount,
+                $"LNurl w payout test {DateTime.UtcNow.Ticks}",
+                TimeSpan.FromHours(1), CancellationToken.None));
+            response = await info.SendRequest(bolt2.BOLT11, s.Server.PayTester.HttpClient);
+            await TestUtils.EventuallyAsync(async () =>
+            {
+                s.Driver.Navigate().Refresh();
+                Assert.Contains(bolt2.BOLT11, s.Driver.PageSource);
+
+                Assert.Contains(PayoutState.Completed.GetStateString(), s.Driver.PageSource);
+                Assert.Equal(LightningInvoiceStatus.Paid, (await s.Server.CustomerLightningD.GetInvoice(bolt2.Id)).Status);
             });
         }
 
@@ -2467,6 +2503,145 @@ retry:
             {
                 Assert.StartsWith(s.ServerUri.ToString(), s.Driver.Url);
             });
+        }
+        [Fact]
+        [Trait("Selenium", "Selenium")]
+        public async Task CanUseRoleManager()
+        {
+            using var s = CreateSeleniumTester(newDb: true);
+            await s.StartAsync();
+            var user = s.RegisterNewUser(true);
+            s.GoToServer(ServerNavPages.Roles);
+            var existingServerRoles = s.Driver.FindElement(By.CssSelector("table")).FindElements(By.CssSelector("tr"));
+            Assert.Equal(3, existingServerRoles.Count);
+            IWebElement ownerRow = null;
+            IWebElement guestRow = null;
+            foreach (var roleItem in existingServerRoles)
+            {
+                if (roleItem.Text.Contains("owner", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    ownerRow = roleItem;
+                }
+                else if (roleItem.Text.Contains("guest", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    guestRow = roleItem;
+                }
+            }
+            
+            Assert.NotNull(ownerRow);
+            Assert.NotNull(guestRow);
+
+            var ownerBadges = ownerRow.FindElements(By.CssSelector(".badge"));
+            Assert.Contains(ownerBadges, element => element.Text.Equals("Default", StringComparison.InvariantCultureIgnoreCase));
+            Assert.Contains(ownerBadges, element => element.Text.Equals("Server-wide", StringComparison.InvariantCultureIgnoreCase));
+            
+            var guestBadges = guestRow.FindElements(By.CssSelector(".badge"));
+            Assert.DoesNotContain(guestBadges, element => element.Text.Equals("Default", StringComparison.InvariantCultureIgnoreCase));
+            Assert.Contains(guestBadges, element => element.Text.Equals("Server-wide", StringComparison.InvariantCultureIgnoreCase));
+            guestRow.FindElement(By.Id("SetDefault")).Click();
+            s.FindAlertMessage();
+            
+            existingServerRoles = s.Driver.FindElement(By.CssSelector("table")).FindElements(By.CssSelector("tr"));
+            foreach (var roleItem in existingServerRoles)
+            {
+                if (roleItem.Text.Contains("owner", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    ownerRow = roleItem;
+                }
+                else if (roleItem.Text.Contains("guest", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    guestRow = roleItem;
+                }
+            }
+            guestBadges = guestRow.FindElements(By.CssSelector(".badge"));
+            Assert.Contains(guestBadges, element => element.Text.Equals("Default", StringComparison.InvariantCultureIgnoreCase));
+            
+            ownerBadges = ownerRow.FindElements(By.CssSelector(".badge"));
+            Assert.DoesNotContain(ownerBadges, element => element.Text.Equals("Default", StringComparison.InvariantCultureIgnoreCase));
+            ownerRow.FindElement(By.Id("SetDefault")).Click();
+            s.FindAlertMessage();
+            
+            
+
+            s.CreateNewStore();
+            s.GoToStore(StoreNavPages.Roles);
+            var existingStoreRoles = s.Driver.FindElement(By.CssSelector("table")).FindElements(By.CssSelector("tr"));
+            Assert.Equal(3, existingStoreRoles.Count);
+            Assert.Equal(2, existingStoreRoles.Count(element => element.Text.Contains("Server-wide", StringComparison.InvariantCultureIgnoreCase)));
+
+            foreach (var roleItem in existingStoreRoles)
+            {
+                if (roleItem.Text.Contains("owner", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    ownerRow = roleItem;
+                    break;
+                }
+            }
+            
+            ownerRow.FindElement(By.LinkText("Remove")).Click();
+            Assert.DoesNotContain("ConfirmContinue", s.Driver.PageSource);
+            s.Driver.Navigate().Back();
+            existingStoreRoles = s.Driver.FindElement(By.CssSelector("table")).FindElements(By.CssSelector("tr"));
+            foreach (var roleItem in existingStoreRoles)
+            {
+                if (roleItem.Text.Contains("guest", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    guestRow = roleItem;
+                    break;
+                }
+            }
+            
+            guestRow.FindElement(By.LinkText("Remove")).Click();
+            s.Driver.FindElement(By.Id("ConfirmContinue")).Click();
+            s.FindAlertMessage();
+            
+            s.GoToStore(StoreNavPages.Roles);
+            s.Driver.FindElement(By.Id("CreateRole")).Click();
+
+            Assert.Contains("Create role", s.Driver.PageSource);
+            s.Driver.FindElement(By.Id("Save")).Click();
+            s.Driver.FindElement(By.Id("Role")).SendKeys("store role");
+            s.Driver.FindElement(By.Id("Save")).Click();
+            s.FindAlertMessage();
+            
+            existingStoreRoles = s.Driver.FindElement(By.CssSelector("table")).FindElements(By.CssSelector("tr"));
+            foreach (var roleItem in existingStoreRoles)
+            {
+                if (roleItem.Text.Contains("store role", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    guestRow = roleItem;
+                    break;
+                }
+            }
+            
+            guestBadges = guestRow.FindElements(By.CssSelector(".badge"));
+            Assert.DoesNotContain(guestBadges, element => element.Text.Equals("server-wide", StringComparison.InvariantCultureIgnoreCase));
+            s.GoToStore(StoreNavPages.Users);
+            var options = s.Driver.FindElements(By.CssSelector("#Role option"));
+            Assert.Equal(2, options.Count);
+            Assert.Contains(options, element => element.Text.Equals("store role", StringComparison.InvariantCultureIgnoreCase));
+            s.CreateNewStore();
+            s.GoToStore(StoreNavPages.Roles);
+            existingStoreRoles = s.Driver.FindElement(By.CssSelector("table")).FindElements(By.CssSelector("tr"));
+            Assert.Equal(2, existingStoreRoles.Count);
+            Assert.Equal(1, existingStoreRoles.Count(element => element.Text.Contains("Server-wide", StringComparison.InvariantCultureIgnoreCase)));
+            Assert.Equal(0, existingStoreRoles.Count(element => element.Text.Contains("store role", StringComparison.InvariantCultureIgnoreCase)));
+            s.GoToStore(StoreNavPages.Users);
+            options = s.Driver.FindElements(By.CssSelector("#Role option"));
+            Assert.Single(options);
+            Assert.DoesNotContain(options, element => element.Text.Equals("store role", StringComparison.InvariantCultureIgnoreCase));
+            
+            
+            s.GoToStore(StoreNavPages.Roles);
+            s.Driver.FindElement(By.Id("CreateRole")).Click();
+            s.Driver.FindElement(By.Id("Role")).SendKeys("Malice");
+           
+            s.Driver.ExecuteJavaScript($"document.getElementById('Policies')['{Policies.CanModifyServerSettings}']=new Option('{Policies.CanModifyServerSettings}', '{Policies.CanModifyServerSettings}', true,true);");
+            
+            s.Driver.FindElement(By.Id("Save")).Click();
+            s.FindAlertMessage();
+            Assert.Contains("Malice",s.Driver.PageSource);
+            Assert.DoesNotContain(Policies.CanModifyServerSettings,s.Driver.PageSource);
         }
 
         private static void CanBrowseContent(SeleniumTester s)

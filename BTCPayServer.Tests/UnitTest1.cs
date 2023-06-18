@@ -39,6 +39,7 @@ using BTCPayServer.Plugins.PayButton;
 using BTCPayServer.Plugins.PointOfSale;
 using BTCPayServer.Plugins.PointOfSale.Controllers;
 using BTCPayServer.Security.Bitpay;
+using BTCPayServer.Security.Greenfield;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Invoices;
@@ -1962,7 +1963,8 @@ namespace BTCPayServer.Tests
             Assert.Empty(appList2.Apps);
             Assert.Equal("test", appList.Apps[0].AppName);
             Assert.Equal(apps.CreatedAppId, appList.Apps[0].Id);
-            Assert.True(app.IsOwner);
+            
+            Assert.True(app.Role.ToPermissionSet(app.StoreId).Contains(Policies.CanModifyStoreSettings, app.StoreId));
             Assert.Equal(user.StoreId, appList.Apps[0].StoreId);
             Assert.IsType<NotFoundResult>(apps2.DeleteApp(appList.Apps[0].Id));
             Assert.IsType<ViewResult>(apps.DeleteApp(appList.Apps[0].Id));
@@ -1983,6 +1985,7 @@ namespace BTCPayServer.Tests
             var user = tester.NewAccount();
             user.GrantAccess(true);
             user.RegisterDerivationScheme("BTC");
+            var btcpayClient = await user.CreateClient();
 
             DateTimeOffset expiration = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(21);
 
@@ -2063,6 +2066,20 @@ namespace BTCPayServer.Tests
 
             var zeroInvoicePM = await greenfield.GetInvoicePaymentMethods(user.StoreId, zeroInvoice.Id);
             Assert.Empty(zeroInvoicePM);
+
+            var invoice6 = await btcpayClient.CreateInvoice(user.StoreId,
+                new CreateInvoiceRequest()
+                {
+                    Amount = GreenfieldConstants.MaxAmount,
+                    Currency = "USD"
+                });
+            var repo = tester.PayTester.GetService<InvoiceRepository>();
+            var entity = (await repo.GetInvoice(invoice6.Id));
+            Assert.Equal((decimal)ulong.MaxValue, entity.Price);
+            entity.GetPaymentMethods().First().Calculate();
+            // Shouldn't be possible as we clamp the value, but existing invoice may have that
+            entity.Price = decimal.MaxValue;
+            entity.GetPaymentMethods().First().Calculate();
         }
 
         [Fact(Timeout = LongRunningTestTimeout)]

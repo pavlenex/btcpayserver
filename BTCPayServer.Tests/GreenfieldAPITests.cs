@@ -21,6 +21,7 @@ using BTCPayServer.Services;
 using BTCPayServer.Services.Custodian.Client.MockCustodian;
 using BTCPayServer.Services.Notifications;
 using BTCPayServer.Services.Notifications.Blobs;
+using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -228,7 +229,7 @@ namespace BTCPayServer.Tests
             await Assert.ThrowsAsync<GreenfieldAPIException>(() => newUserClient.GetInvoices(store.Id));
 
             // if user is a guest or owner, then it should be ok
-            await unrestricted.AddStoreUser(store.Id, new StoreUserData() { UserId = newUser.Id, Role = "Guest" });
+            await unrestricted.AddStoreUser(store.Id, new StoreUserData() { UserId = newUser.Id});
             await newUserClient.GetInvoices(store.Id);
         }
 
@@ -1073,6 +1074,22 @@ namespace BTCPayServer.Tests
             var lnrURLs = await unauthenticated.GetPullPaymentLNURL(test4.Id);
             Assert.IsType<string>(lnrURLs.LNURLBech32);
             Assert.IsType<string>(lnrURLs.LNURLUri);
+            Assert.Equal(12.303228134m, test4.Amount);
+            Assert.Equal("BTC", test4.Currency);
+            
+            // Test with SATS denomination values
+            var testSats = await client.CreatePullPayment(storeId, new Client.Models.CreatePullPaymentRequest()
+            {
+                Name = "Test SATS",
+                Amount = 21000,
+                Currency = "SATS",
+                PaymentMethods = new[] { "BTC", "BTC-LightningNetwork", "BTC_LightningLike" }
+            });
+            lnrURLs = await unauthenticated.GetPullPaymentLNURL(testSats.Id);
+            Assert.IsType<string>(lnrURLs.LNURLBech32);
+            Assert.IsType<string>(lnrURLs.LNURLUri);
+            Assert.Equal(21000, testSats.Amount);
+            Assert.Equal("SATS", testSats.Currency);
 
             //permission test around auto approved pps and payouts
             var nonApproved = await acc.CreateClient(Policies.CanCreateNonApprovedPullPayments);
@@ -1319,7 +1336,8 @@ namespace BTCPayServer.Tests
             // We strip the user's Owner right, so the key should not work
             using var ctx = tester.PayTester.GetService<Data.ApplicationDbContextFactory>().CreateContext();
             var storeEntity = await ctx.UserStore.SingleAsync(u => u.ApplicationUserId == user.UserId && u.StoreDataId == newStore.Id);
-            storeEntity.Role = "Guest";
+            var roleId  = (await tester.PayTester.GetService<StoreRepository>().GetStoreRoles(null)).Single(r => r.Role == "Guest").Id;
+            storeEntity.StoreRoleId = roleId;
             await ctx.SaveChangesAsync();
             await AssertHttpError(403, async () => await client.UpdateStore(newStore.Id, new UpdateStoreRequest() { Name = "B" }));
 
@@ -1430,7 +1448,7 @@ namespace BTCPayServer.Tests
                 Assert.False(hook.AutomaticRedelivery);
                 Assert.Equal(fakeServer.ServerUri.AbsoluteUri, hook.Url);
             }
-            using var tester = CreateServerTester();
+            using var tester = CreateServerTester(newDb: true);
             using var fakeServer = new FakeServer();
             await fakeServer.Start();
             await tester.StartAsync();
@@ -1506,6 +1524,14 @@ namespace BTCPayServer.Tests
             TestLogs.LogInformation("Can use btcpay.store.canmodifystoresettings to query webhooks");
             clientProfile = await user.CreateClient(Policies.CanModifyStoreSettings, Policies.CanCreateInvoice);
             await clientProfile.GetWebhookDeliveryRequest(user.StoreId, hook.Id, newDeliveryId);
+
+
+            TestLogs.LogInformation("Can prune deliveries");
+            var cleanup = tester.PayTester.GetService<HostedServices.CleanupWebhookDeliveriesTask>();
+            cleanup.BatchSize = 1;
+            cleanup.PruneAfter = TimeSpan.Zero;
+            await cleanup.Do(default);
+            await AssertHttpError(409, () => clientProfile.RedeliverWebhook(user.StoreId, hook.Id, delivery.Id));
 
             TestLogs.LogInformation("Testing corner cases");
             Assert.Null(await clientProfile.GetWebhookDeliveryRequest(user.StoreId, "lol", newDeliveryId));
@@ -2583,7 +2609,12 @@ namespace BTCPayServer.Tests
             user.RegisterLightningNode("BTC", LightningConnectionType.CLightning);
 
             var client = await user.CreateClient(Policies.Unrestricted);
-            var invoice = await client.CreateInvoice(user.StoreId,
+            var invoices = new Task<Client.Models.InvoiceData>[5];
+
+            // Create invoices
+            for (int i = 0; i < invoices.Length; i++)
+            {
+                invoices[i] = client.CreateInvoice(user.StoreId,
                 new CreateInvoiceRequest
                 {
                     Currency = "USD",
@@ -2594,18 +2625,35 @@ namespace BTCPayServer.Tests
                         DefaultPaymentMethod = "BTC_LightningLike"
                     }
                 });
-            var pm = Assert.Single(await client.GetInvoicePaymentMethods(user.StoreId, invoice.Id));
-            Assert.False(pm.AdditionalData.HasValues);
+            }
 
-            var resp = await tester.CustomerLightningD.Pay(pm.Destination);
-            Assert.Equal(PayResult.Ok, resp.Result);
-            Assert.NotNull(resp.Details.PaymentHash);
-            Assert.NotNull(resp.Details.Preimage);
+            var pm = new InvoicePaymentMethodDataModel[invoices.Length];
+            for (int i = 0; i < invoices.Length; i++)
+            {
+                pm[i] = Assert.Single(await client.GetInvoicePaymentMethods(user.StoreId, (await invoices[i]).Id));
+                Assert.False(pm[i].AdditionalData.HasValues);
+            }
 
-            pm = Assert.Single(await client.GetInvoicePaymentMethods(user.StoreId, invoice.Id));
-            Assert.True(pm.AdditionalData.HasValues);
-            Assert.Equal(resp.Details.PaymentHash.ToString(), pm.AdditionalData.GetValue("paymentHash"));
-            Assert.Equal(resp.Details.Preimage.ToString(), pm.AdditionalData.GetValue("preimage"));
+            // Pay them all at once
+            Task<PayResponse>[] payResponses = new Task<PayResponse>[invoices.Length];
+            for (int i = 0; i < invoices.Length; i++)
+            {
+                payResponses[i] = tester.CustomerLightningD.Pay(pm[i].Destination);
+            }
+
+            // Checking the results
+            for (int i = 0; i < invoices.Length; i++)
+            {
+                var resp = await payResponses[i];
+                Assert.Equal(PayResult.Ok, resp.Result);
+                Assert.NotNull(resp.Details.PaymentHash);
+                Assert.NotNull(resp.Details.Preimage);
+
+                pm[i] = Assert.Single(await client.GetInvoicePaymentMethods(user.StoreId, (await invoices[i]).Id));
+                Assert.True(pm[i].AdditionalData.HasValues);
+                Assert.Equal(resp.Details.PaymentHash.ToString(), pm[i].AdditionalData.GetValue("paymentHash"));
+                Assert.Equal(resp.Details.Preimage.ToString(), pm[i].AdditionalData.GetValue("preimage"));
+            }
         }
 
         [Fact(Timeout = 60 * 20 * 1000)]
@@ -3343,11 +3391,16 @@ namespace BTCPayServer.Tests
 
             var client = await user.CreateClient(Policies.CanModifyStoreSettings, Policies.CanModifyServerSettings);
 
+            var roles = await client.GetServerRoles();
+            Assert.Equal(2,roles.Count);
+#pragma warning disable CS0618
+            var ownerRole = roles.Single(data => data.Role == StoreRoles.Owner);
+            var guestRole = roles.Single(data => data.Role == StoreRoles.Guest);
+#pragma warning restore CS0618
             var users = await client.GetStoreUsers(user.StoreId);
             var storeuser = Assert.Single(users);
             Assert.Equal(user.UserId, storeuser.UserId);
-            Assert.Equal(StoreRoles.Owner, storeuser.Role);
-
+            Assert.Equal(ownerRole.Id, storeuser.Role);
             var user2 = tester.NewAccount();
             await user2.GrantAccessAsync(false);
 
@@ -3358,7 +3411,7 @@ namespace BTCPayServer.Tests
             await AssertPermissionError(Policies.CanModifyStoreSettings, async () => await user2Client.AddStoreUser(user.StoreId, new StoreUserData()));
             await AssertPermissionError(Policies.CanModifyStoreSettings, async () => await user2Client.RemoveStoreUser(user.StoreId, user.UserId));
 
-            await client.AddStoreUser(user.StoreId, new StoreUserData() { Role = StoreRoles.Guest, UserId = user2.UserId });
+            await client.AddStoreUser(user.StoreId, new StoreUserData() { Role = guestRole.Id, UserId = user2.UserId });
 
             //test no access to api when only a guest
             await AssertPermissionError(Policies.CanModifyStoreSettings, async () => await user2Client.GetStoreUsers(user.StoreId));
@@ -3372,10 +3425,10 @@ namespace BTCPayServer.Tests
                 await user2Client.GetStore(user.StoreId));
 
 
-            await client.AddStoreUser(user.StoreId, new StoreUserData() { Role = StoreRoles.Owner, UserId = user2.UserId });
+            await client.AddStoreUser(user.StoreId, new StoreUserData() { Role = ownerRole.Id, UserId = user2.UserId });
             await AssertAPIError("duplicate-store-user-role", async () =>
                  await client.AddStoreUser(user.StoreId,
-                     new StoreUserData() { Role = StoreRoles.Owner, UserId = user2.UserId }));
+                     new StoreUserData() { Role = ownerRole.Id, UserId = user2.UserId }));
             await user2Client.RemoveStoreUser(user.StoreId, user.UserId);
 
 
