@@ -20,8 +20,6 @@ using BTCPayServer.Models.AppViewModels;
 using BTCPayServer.Models.InvoicingModels;
 using BTCPayServer.Models.PaymentRequestViewModels;
 using BTCPayServer.Payments;
-using BTCPayServer.Payments.Bitcoin;
-using BTCPayServer.Payments.Lightning;
 using BTCPayServer.Rating;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
@@ -229,14 +227,18 @@ namespace BTCPayServer.Controllers
 
                     string txId = paymentData.GetPaymentId();
                     string? link = GetTransactionLink(paymentMethodId, txId);
-                    
+                    var paymentMethod = i.GetPaymentMethod(paymentMethodId);
+                    var amount = paymentData.GetValue();
+                    var rate = paymentMethod.Rate;
+                    var paid = (amount - paymentEntity.NetworkFee) * rate;
+
                     return new ViewPaymentRequestViewModel.PaymentRequestInvoicePayment
                     {
-                        Amount = paymentEntity.PaidAmount.Gross,
-                        Paid = paymentEntity.PaidAmount.Net,
+                        Amount = amount,
+                        Paid = paid,
                         ReceivedDate = paymentEntity.ReceivedTime.DateTime,
-                        PaidFormatted = _displayFormatter.Currency(paymentEntity.PaidAmount.Net, i.Currency, DisplayFormatter.CurrencyFormat.Symbol),
-                        RateFormatted = _displayFormatter.Currency(paymentEntity.Rate, i.Currency, DisplayFormatter.CurrencyFormat.Symbol),
+                        PaidFormatted = _displayFormatter.Currency(paid, i.Currency, DisplayFormatter.CurrencyFormat.Symbol),
+                        RateFormatted = _displayFormatter.Currency(rate, i.Currency, DisplayFormatter.CurrencyFormat.Symbol),
                         PaymentMethod = paymentMethodId.ToPrettyString(),
                         Link = link,
                         Id = txId,
@@ -956,6 +958,16 @@ namespace BTCPayServer.Controllers
             model.PaymentMethodId = paymentMethodId.ToString();
             model.PaymentType = paymentMethodId.PaymentType.ToString();
             model.OrderAmountFiat = OrderAmountFromInvoice(model.CryptoCode, invoice, DisplayFormatter.CurrencyFormat.Symbol);
+
+            if (storeBlob.PlaySoundOnPayment)
+            {
+                model.PaymentSoundUrl = string.IsNullOrEmpty(storeBlob.SoundFileId)
+                    ? string.Concat(Request.GetAbsoluteRootUri().ToString(), "checkout-v2/payment.mp3")
+                    : await _fileService.GetFileUrl(Request.GetAbsoluteRootUri(), storeBlob.SoundFileId);
+                model.ErrorSoundUrl = string.Concat(Request.GetAbsoluteRootUri().ToString(), "checkout-v2/error.mp3");
+                model.NfcReadSoundUrl = string.Concat(Request.GetAbsoluteRootUri().ToString(), "checkout-v2/nfcread.mp3");
+            }
+            
             var expiration = TimeSpan.FromSeconds(model.ExpirationSeconds);
             model.TimeLeft = expiration.PrettyPrint();
             return model;
@@ -1280,32 +1292,40 @@ namespace BTCPayServer.Controllers
 
             try
             {
-                var result = await CreateInvoiceCore(new BitpayCreateInvoiceRequest
+                var result = await CreateInvoiceCoreRaw(new CreateInvoiceRequest()
                 {
-                    Price = model.Amount,
+                    Amount = model.Amount,
                     Currency = model.Currency,
-                    PosData = model.PosData,
-                    OrderId = model.OrderId,
-                    NotificationURL = model.NotificationUrl,
-                    ItemDesc = model.ItemDesc,
-                    FullNotifications = true,
-                    BuyerEmail = model.BuyerEmail,
-                    SupportedTransactionCurrencies = model.SupportedTransactionCurrencies?.ToDictionary(s => s, s => new InvoiceSupportedTransactionCurrency
+                    Metadata = new InvoiceMetadata()
                     {
-                        Enabled = true
-                    }),
-                    DefaultPaymentMethod = model.DefaultPaymentMethod,
-                    NotificationEmail = model.NotificationEmail,
-                    ExtendedNotifications = model.NotificationEmail != null,
-                    RequiresRefundEmail = model.RequiresRefundEmail == RequiresRefundEmail.InheritFromStore
-                        ? storeBlob.RequiresRefundEmail
-                        : model.RequiresRefundEmail == RequiresRefundEmail.On,
-                }, store, HttpContext.Request.GetAbsoluteRoot(), cancellationToken: cancellationToken);
+                        PosDataLegacy = model.PosData,
+                        OrderId = model.OrderId,
+                        ItemDesc = model.ItemDesc,
+                        BuyerEmail = model.BuyerEmail,
+                    }.ToJObject(),
+                    Checkout = new ()
+                    {
+                        RedirectURL = store.StoreWebsite,
+                        DefaultPaymentMethod = model.DefaultPaymentMethod,
+                        RequiresRefundEmail = model.RequiresRefundEmail == RequiresRefundEmail.InheritFromStore
+                            ? storeBlob.RequiresRefundEmail
+                            : model.RequiresRefundEmail == RequiresRefundEmail.On,
+                        PaymentMethods = model.SupportedTransactionCurrencies?.ToArray()
+                    },
+                }, store, HttpContext.Request.GetAbsoluteRoot(),
+                    entityManipulator: (entity) =>
+                    {
+                        entity.NotificationURLTemplate = model.NotificationUrl;
+                        entity.FullNotifications = true;
+                        entity.NotificationEmail = model.NotificationEmail;
+                        entity.ExtendedNotifications = model.NotificationEmail != null;
+                    },
+                    cancellationToken: cancellationToken);
 
-                TempData[WellKnownTempData.SuccessMessage] = $"Invoice {result.Data.Id} just created!";
-                CreatedInvoiceId = result.Data.Id;
+                TempData[WellKnownTempData.SuccessMessage] = $"Invoice {result.Id} just created!";
+                CreatedInvoiceId = result.Id;
 
-                return RedirectToAction(nameof(Invoice), new { storeId = result.Data.StoreId, invoiceId = result.Data.Id });
+                return RedirectToAction(nameof(Invoice), new { storeId = result.StoreId, invoiceId = result.Id });
             }
             catch (BitpayHttpException ex)
             {
