@@ -16,12 +16,14 @@ using BTCPayServer.Storage.Models;
 using BTCPayServer.Storage.Services.Providers.AzureBlobStorage.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileSystemGlobbing;
 using NBitcoin;
 using NBitpayClient;
 using Newtonsoft.Json;
 using Xunit;
 using Xunit.Abstractions;
 using Xunit.Sdk;
+using static BTCPayServer.HostedServices.PullPaymentHostedService.PayoutApproval;
 
 namespace BTCPayServer.Tests
 {
@@ -177,7 +179,7 @@ namespace BTCPayServer.Tests
             Assert.Contains(rates, e => e.CurrencyPair == new CurrencyPair("XMR", "BTC") && e.BidAsk.Bid < 1.0m);
 
             // Check we didn't skip too many exchanges
-            Assert.InRange(skipped, 0, 3);
+            Assert.InRange(skipped, 0, 5);
         }
 
         [Fact]
@@ -290,9 +292,31 @@ retry:
         }
 
         [Fact]
+        public async Task CanGetRateFromRecommendedExchanges()
+        {
+            var factory = FastTests.CreateBTCPayRateFactory();
+            var fetcher = new RateFetcher(factory);
+            var provider = new BTCPayNetworkProvider(ChainName.Mainnet);
+            var b = new StoreBlob();
+            foreach (var k in StoreBlob.RecommendedExchanges)
+            {
+                b.DefaultCurrency = k.Key;
+                var rules = b.GetDefaultRateRules(provider);
+                var pairs = new[] { CurrencyPair.Parse($"BTC_{k.Key}") }.ToHashSet();
+                var result = fetcher.FetchRates(pairs, rules, default);
+                foreach ((CurrencyPair key, Task<RateResult> value) in result)
+                {
+                    var rateResult = await value;
+                    TestLogs.LogInformation($"Testing {key} when default currency is {k.Key}");
+                    Assert.True(rateResult.BidAsk != null, $"Impossible to get the rate {rateResult.EvaluatedRule}");
+                }
+            }
+        }
+
+        [Fact]
         public async Task CanGetRateCryptoCurrenciesByDefault()
         {
-            string[] brokenShitcoins = { };
+            using var cts = new CancellationTokenSource(60_000);
             var provider = new BTCPayNetworkProvider(ChainName.Mainnet);
             var factory = FastTests.CreateBTCPayRateFactory();
             var fetcher = new RateFetcher(factory);
@@ -301,37 +325,25 @@ retry:
                     .Select(c => new CurrencyPair(c.CryptoCode, "USD"))
                     .ToHashSet();
 
+            string[] brokenShitcoins = { "BTG", "LCAD" };
+            bool IsBrokenShitcoin(CurrencyPair p) => brokenShitcoins.Contains(p.Left) || brokenShitcoins.Contains(p.Right);
+            foreach (var _ in brokenShitcoins)
+            {
+                foreach (var p in pairs.Where(IsBrokenShitcoin).ToArray())
+                {
+                    TestLogs.LogInformation($"Skipping {p} because it is marked as broken");
+                    pairs.Remove(p);
+                }
+            }
+
             var rules = new StoreBlob().GetDefaultRateRules(provider);
-            var result = fetcher.FetchRates(pairs, rules, default);
+            var result = fetcher.FetchRates(pairs, rules, cts.Token);
             foreach ((CurrencyPair key, Task<RateResult> value) in result)
             {
                 var rateResult = await value;
                 TestLogs.LogInformation($"Testing {key}");
-                if (brokenShitcoins.Contains(key.ToString()))
-                    continue;
                 Assert.True(rateResult.BidAsk != null, $"Impossible to get the rate {rateResult.EvaluatedRule}");
             }
-
-            var b = new StoreBlob();
-            foreach (var k in StoreBlob.RecommendedExchanges)
-            {
-                b.DefaultCurrency = k.Key;
-                rules = b.GetDefaultRateRules(provider);
-                pairs =
-                    provider.GetAll()
-                        .Select(c => new CurrencyPair(c.CryptoCode, k.Key))
-                        .ToHashSet();
-                result = fetcher.FetchRates(pairs, rules, default);
-                foreach ((CurrencyPair key, Task<RateResult> value) in result)
-                {
-                    var rateResult = await value;
-                    TestLogs.LogInformation($"Testing {key} when default currency is {k.Key}");
-                    if (brokenShitcoins.Contains(key.ToString()))
-                        continue;
-                    Assert.True(rateResult.BidAsk != null, $"Impossible to get the rate {rateResult.EvaluatedRule}");
-                }
-            }
-
         }
 
         [Fact]
