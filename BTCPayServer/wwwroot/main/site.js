@@ -1,3 +1,5 @@
+const baseUrl = Object.values(document.scripts).find(s => s.src.includes('/main/site.js')).src.split('/main/site.js').shift();
+
 const flatpickrInstances = [];
 
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat/DateTimeFormat
@@ -33,7 +35,7 @@ async function initLabelManager (elementId) {
             : '--label-bg:var(--btcpay-neutral-300);--label-fg:var(--btcpay-neutral-800)'
 
     if (element) {
-        const { fetchUrl, updateUrl, walletId, walletObjectType, walletObjectId, labels,selectElement } = element.dataset;
+        const { fetchUrl, updateUrl, walletId, walletObjectType, walletObjectId, labels, selectElement } = element.dataset;
         const commonCallId = `walletLabels-${walletId}`;
         if (!window[commonCallId]) {
             window[commonCallId] = fetch(fetchUrl, {
@@ -44,7 +46,6 @@ async function initLabelManager (elementId) {
                 },
             }).then(res => res.json());
         }
-        const selectElementI = document.getElementById(selectElement);
         const items = element.value.split(',').filter(x => !!x);
         const options = await window[commonCallId].then(labels => {
             const newItems = items.filter(item => !labels.find(label => label.label === item));
@@ -92,7 +93,8 @@ async function initLabelManager (elementId) {
                 }));
             },
             async onChange (values) {
-                if(selectElementI){
+                const selectElementI = selectElement ? document.getElementById(selectElement) : null;
+                if (selectElementI){
                     while (selectElementI.options.length > 0) {
                         selectElementI.remove(0);
                     }
@@ -268,6 +270,23 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
     
+    // Invoice Status
+    delegate('click', '[data-invoice-state-badge] [data-invoice-id][data-new-state]', async e => {
+        const $button = e.target
+        const $badge = $button.closest('[data-invoice-state-badge]')
+        const { invoiceId, newState } = $button.dataset
+
+        $badge.classList.add('pe-none'); // disable further interaction
+        const response = await fetch(`${baseUrl}/invoices/${invoiceId}/changestate/${newState}`, { method: 'POST' })
+        if (response.ok) {
+            const { statusString } = await response.json()
+            $badge.outerHTML = `<div class="badge badge-${newState}" data-invoice-state-badge="${invoiceId}">${statusString}</div>`
+        } else {
+            $badge.classList.remove('pe-none');
+            alert("Invoice state update failed");
+        }
+    })
+    
     // Time Format
     delegate('click', '.switch-time-format', switchTimeFormat);
 
@@ -342,73 +361,79 @@ document.addEventListener("DOMContentLoaded", () => {
 if (window.Blazor) {
     let isUnloading = false;
     window.addEventListener("beforeunload", () => { isUnloading = true; });
+    let brokenConnection = {
+        isConnected: false,
+        titleContent: 'Connection broken',
+        innerHTML: 'Please <a href="">refresh the page</a>.'
+    };
+    let interruptedConnection = {
+        isConnected: false,
+        titleContent: 'Connection interrupted',
+        innerHTML: 'Attempt to reestablish the connection in a few seconds...'
+    };
+    let successfulConnection = {
+        isConnected: true,
+        titleContent: 'Connection established',
+        innerHTML: '' // use empty link on purpose
+    };
     class BlazorReconnectionHandler {
         reconnecting = false;
         async onConnectionDown(options, _error) {
             if (this.reconnecting)
                 return;
-            this.setBlazorStatus(false);
+            this.setBlazorStatus(interruptedConnection);
             this.reconnecting = true;
-            console.warn('Blazor hub connection lost');
+            console.debug('Blazor hub connection lost');
             await this.reconnect();
         }
+
         async reconnect() {
-            let delays = [500, 1000, 2000, 4000, 8000, 16000, 20000];
+            let delays = [500, 1000, 2000, 4000, 8000, 16000, 20000, 40000];
             let i = 0;
             const lastDelay = delays.length - 1;
-            while (true) {
+            while (i < delays.length) {
                 await this.delay(delays[i]);
                 try {
                     if (await Blazor.reconnect())
-                        break;
-
-                    var refresh = document.createElement('span');
-                    refresh.appendChild(document.createTextNode('Please '));
-                    var refreshLink = document.createElement('a');
-                    refreshLink.href = "#";
-                    refreshLink.textContent = "refresh";
-                    refreshLink.addEventListener('click', (event) => { event.preventDefault(); window.location.reload(); });
-                    refresh.appendChild(refreshLink);
-                    refresh.appendChild(document.createTextNode(' the page.'));
-
-                    this.setBlazorStatus(false, refresh);
+                        return;
                     console.warn('Error while reconnecting to Blazor hub (Broken circuit)');
+                    break;
                 }
                 catch (err) {
-                    this.setBlazorStatus(false, err + '. Reconnecting...');
+                    this.setBlazorStatus(interruptedConnection);
                     console.warn(`Error while reconnecting to Blazor hub (${err})`);
                 }
                 i++;
-                if (i > lastDelay)
-                    i = lastDelay;
             }
+            this.setBlazorStatus(brokenConnection);
         }
         onConnectionUp() {
             this.reconnecting = false;
             console.debug('Blazor hub connected');
-            this.setBlazorStatus(true);
+            this.setBlazorStatus(successfulConnection);
         }
 
-        setBlazorStatus(isConnected, text) {
+        setBlazorStatus(content) {
             document.querySelectorAll('.blazor-status').forEach($status => {
                 const $state = $status.querySelector('.blazor-status__state');
                 const $title = $status.querySelector('.blazor-status__title');
                 const $body = $status.querySelector('.blazor-status__body');
                 $state.classList.remove('btcpay-status--enabled');
                 $state.classList.remove('btcpay-status--disabled');
-                $state.classList.add('btcpay-status--' + (isConnected ? 'enabled' : 'disabled'));
-                $title.textContent = `Backend ${isConnected ? 'connected' : 'disconnected'}`;
-                if (text instanceof Node) {
-                    $body.innerHTML = '';
-                    $body.appendChild(text);
-                } else
-                    $body.textContent = text || '';
-
-                $body.classList.toggle('d-none', !text);
-                if (!isConnected && !isUnloading) {
+                $state.classList.add(content.isConnected ? 'btcpay-status--enabled' : 'btcpay-status--disabled');
+                $title.textContent = content.titleContent;
+                $body.innerHTML = content.innerHTML;
+                $body.classList.toggle('d-none', content.isConnected);
+                if (!isUnloading) {
                     const toast = new bootstrap.Toast($status, { autohide: false });
-                    if (!toast.isShown())
-                        toast.show();
+                    if (content.isConnected) {
+                        if (toast.isShown())
+                            toast.hide();
+                    }
+                    else {
+                        if (!toast.isShown())
+                            toast.show();
+                    }
                 }
             });
         }
@@ -418,7 +443,7 @@ if (window.Blazor) {
     }
 
     const handler = new BlazorReconnectionHandler();
-    handler.setBlazorStatus(true);
+    handler.setBlazorStatus(successfulConnection);
     Blazor.start({
         reconnectionHandler: handler
     });

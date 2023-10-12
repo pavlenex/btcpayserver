@@ -859,11 +859,10 @@ namespace BTCPayServer.Controllers
             return RedirectToAction(nameof(UIHomeController.Index), "UIHome");
         }
 
-        private IEnumerable<AvailableRateProvider> GetSupportedExchanges()
+        private IEnumerable<RateSourceInfo> GetSupportedExchanges()
         {
             return _RateFactory.RateProviderFactory.AvailableRateProviders
-                .Where(r => !string.IsNullOrWhiteSpace(r.Name))
-                .OrderBy(s => s.Id, StringComparer.OrdinalIgnoreCase);
+                .OrderBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase);
 
         }
 

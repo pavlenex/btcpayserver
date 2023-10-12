@@ -298,6 +298,7 @@ retry:
             var fetcher = new RateFetcher(factory);
             var provider = new BTCPayNetworkProvider(ChainName.Mainnet);
             var b = new StoreBlob();
+            string[] temporarilyBroken = { "COP", "UGX" };
             foreach (var k in StoreBlob.RecommendedExchanges)
             {
                 b.DefaultCurrency = k.Key;
@@ -306,9 +307,20 @@ retry:
                 var result = fetcher.FetchRates(pairs, rules, default);
                 foreach ((CurrencyPair key, Task<RateResult> value) in result)
                 {
-                    var rateResult = await value;
                     TestLogs.LogInformation($"Testing {key} when default currency is {k.Key}");
-                    Assert.True(rateResult.BidAsk != null, $"Impossible to get the rate {rateResult.EvaluatedRule}");
+                    var rateResult = await value;
+                    var hasRate = rateResult.BidAsk != null;
+                    
+                    if (temporarilyBroken.Contains(k.Key))
+                    {
+                        if (!hasRate)
+                        {
+                            TestLogs.LogInformation($"Skipping {key} because it is marked as temporarily broken");
+                            continue;
+                        }
+                        TestLogs.LogInformation($"Note: {key} is marked as temporarily broken, but the rate is available");
+                    }
+                    Assert.True(hasRate, $"Impossible to get the rate {rateResult.EvaluatedRule}");
                 }
             }
         }
@@ -325,7 +337,7 @@ retry:
                     .Select(c => new CurrencyPair(c.CryptoCode, "USD"))
                     .ToHashSet();
 
-            string[] brokenShitcoins = { "BTG", "LCAD" };
+            string[] brokenShitcoins = { "BTG", "BTX" };
             bool IsBrokenShitcoin(CurrencyPair p) => brokenShitcoins.Contains(p.Left) || brokenShitcoins.Contains(p.Right);
             foreach (var _ in brokenShitcoins)
             {
@@ -385,7 +397,8 @@ retry:
             EqualJsContent(expected, actual);
 
             actual = GetFileContent("BTCPayServer", "wwwroot", "vendor", "tom-select", "tom-select.complete.min.js").Trim();
-            expected = (await (await client.GetAsync($"https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js")).Content.ReadAsStringAsync()).Trim();
+            version = Regex.Match(actual, "Tom Select v([0-9]+.[0-9]+.[0-9]+)").Groups[1].Value;
+            expected = (await (await client.GetAsync($"https://cdn.jsdelivr.net/npm/tom-select@{version}/dist/js/tom-select.complete.min.js")).Content.ReadAsStringAsync()).Trim();
             EqualJsContent(expected, actual);
 
             actual = GetFileContent("BTCPayServer", "wwwroot", "vendor", "dom-confetti", "dom-confetti.min.js").Trim();
@@ -414,6 +427,11 @@ retry:
             actual = GetFileContent("BTCPayServer", "wwwroot", "vendor", "vue-sanitize-directive", "vue-sanitize-directive.umd.min.js").Trim();
             version = Regex.Match(actual, "Original file: /npm/vue-sanitize-directive@([0-9]+.[0-9]+.[0-9]+)").Groups[1].Value;
             expected = (await (await client.GetAsync($"https://cdn.jsdelivr.net/npm/vue-sanitize-directive@{version}/dist/vue-sanitize-directive.umd.min.js")).Content.ReadAsStringAsync()).Trim();
+            EqualJsContent(expected, actual);
+
+            actual = GetFileContent("BTCPayServer", "wwwroot", "vendor", "decimal.js", "decimal.min.js").Trim();
+            version = Regex.Match(actual, "Original file: /npm/decimal\\.js@([0-9]+.[0-9]+.[0-9]+)/decimal\\.js").Groups[1].Value;
+            expected = (await (await client.GetAsync($"https://cdn.jsdelivr.net/npm/decimal.js@{version}/decimal.min.js")).Content.ReadAsStringAsync()).Trim();
             EqualJsContent(expected, actual);
         }
 

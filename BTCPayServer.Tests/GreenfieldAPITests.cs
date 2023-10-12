@@ -885,7 +885,7 @@ namespace BTCPayServer.Tests
 
             TestLogs.LogInformation("Can't archive without knowing the walletId");
             var ex = await AssertAPIError("missing-permission", async () => await client.ArchivePullPayment("lol", result.Id));
-            Assert.Equal("btcpay.store.canmanagepullpayments", ((GreenfieldPermissionAPIError)ex.APIError).MissingPermission);
+            Assert.Equal("btcpay.store.canarchivepullpayments", ((GreenfieldPermissionAPIError)ex.APIError).MissingPermission);
             TestLogs.LogInformation("Can't archive without permission");
             await AssertAPIError("unauthenticated", async () => await unauthenticated.ArchivePullPayment(storeId, result.Id));
             await client.ArchivePullPayment(storeId, result.Id);
@@ -1606,7 +1606,7 @@ namespace BTCPayServer.Tests
             using var tester = CreateServerTester();
             await tester.StartAsync();
             var user = tester.NewAccount();
-            user.GrantAccess();
+            await user.GrantAccessAsync();
             await user.MakeAdmin();
             var client = await user.CreateClient(Policies.Unrestricted);
             var viewOnly = await user.CreateClient(Policies.CanViewPaymentRequests);
@@ -1688,11 +1688,18 @@ namespace BTCPayServer.Tests
                         BitcoinAddress.Create(invoice.BitcoinAddress, tester.ExplorerNode.Network), invoice.BtcDue);
                 });
                 await TestUtils.EventuallyAsync(async () =>
-                 {
-                     Assert.Equal(Invoice.STATUS_PAID, user.BitPay.GetInvoice(invoiceId).Status);
-                     if (!partialPayment)
-                         Assert.Equal(PaymentRequestData.PaymentRequestStatus.Completed, (await client.GetPaymentRequest(user.StoreId, paymentTestPaymentRequest.Id)).Status);
-                 });
+                {
+                    Assert.Equal(Invoice.STATUS_PAID, (await user.BitPay.GetInvoiceAsync(invoiceId)).Status);
+                    if (!partialPayment)
+                        Assert.Equal(PaymentRequestData.PaymentRequestStatus.Processing, (await client.GetPaymentRequest(user.StoreId, paymentTestPaymentRequest.Id)).Status);
+                });
+                await tester.ExplorerNode.GenerateAsync(1);
+                await TestUtils.EventuallyAsync(async () =>
+                {
+                    Assert.Equal(Invoice.STATUS_CONFIRMED, (await user.BitPay.GetInvoiceAsync(invoiceId)).Status);
+                    if (!partialPayment)
+                        Assert.Equal(PaymentRequestData.PaymentRequestStatus.Completed, (await client.GetPaymentRequest(user.StoreId, paymentTestPaymentRequest.Id)).Status);
+                });
             }
             await Pay(invoiceId);
 

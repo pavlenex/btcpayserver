@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.11.6
+
+An update is recommended if you share your server with many users. Your server could crash (Error HTTP 500) if you have a high number of users.
+
+### Bug fixes
+
+* Fix: After a while, a busy server would send error HTTP 500 (#5354) @NicolasDorier
+* Fix: Exchangerate.host falsly appear as Yadio in the UI (#5347) @NicolasDorier
+
+### Improvements
+
+* Improve receipt info display (#5350) @dennisreimann
+* Recommend Yadio for ARS currency rate (#5347) @NicolasDorier
+* Recommend exchangeratehost for COP currency rate @NicolasDorier
+* Hide 'Connection established' when connection to server come back (#5352) @NicolasDorier
+
+## 1.11.5
+
+### New feature
+
+* Reporting: Add payouts (#5320) @Kukks
+* Wallet: Delete custom labels (#5324, #5237) @dennisreimann
+* Dashboard: Show revenue data for keypad (#5317) @dennisreimann
+* Dashboard: Show the number of paid invoices in the last 7 days (#5316, #5300) @dennisreimann
+* Login: Add Remember Me button (#5307, #5302) @dennisreimann
+* Archive stores and apps (#5296) @dennisreimann
+* New permission: Can archive pull payment (#5274) @Kukks
+* Pull Payment: Show QR code for LNURL-Withdraw (#5274) @Kukks
+
+### Bug fixes
+
+* Fix: Transient error 500 when accessing the wallet page (#5326, #5328) @NicolasDorier
+* Fix: Revert to default block explorer button wasn't working (#5340) @NicolasDorier
+* Payment Request: Reflect processing status for on-chain payments (#5309, #5297) @dennisreimann
+* NFC: Fix error display (#5305) @dennisreimann
+
+### Improvements
+
+* Email Rules: Add default texts and document placeholders (#5314) @dennisreimann
+* UI: The on-chain addresses should only be truncated on the middle (#5313, #5311) @dennisreimann
+* Store settings: Allow configuring NFC permission beforehand (#5319) @Kukks
+* Remove legacy export (#5293) @NicolasDorier
+
 ## 1.11.4
 
 Minor update recommended for deployment stacks which were using MySQL/SQLite backend in the past such as Raspiblitz, Umbrel, Embassy OS.
