@@ -23,6 +23,7 @@ using BTCPayServer.Fido2.Models;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Hosting;
 using BTCPayServer.Lightning;
+using BTCPayServer.Lightning.Charge;
 using BTCPayServer.Models;
 using BTCPayServer.Models.AccountViewModels;
 using BTCPayServer.Models.AppViewModels;
@@ -68,6 +69,7 @@ using Newtonsoft.Json.Schema;
 using Xunit;
 using Xunit.Abstractions;
 using Xunit.Sdk;
+using CreateInvoiceRequest = BTCPayServer.Client.Models.CreateInvoiceRequest;
 using RatesViewModel = BTCPayServer.Models.StoreViewModels.RatesViewModel;
 
 namespace BTCPayServer.Tests
@@ -175,7 +177,7 @@ namespace BTCPayServer.Tests
             // If this test fail, run `UpdateSwagger` once.
             if (description != json["components"]["securitySchemes"]["API_Key"]["description"].Value<string>())
             {
-                Assert.False(true, "Please run manually the test `UpdateSwagger` once");
+                Assert.Fail("Please run manually the test `UpdateSwagger` once");
             }
         }
 
@@ -269,7 +271,7 @@ namespace BTCPayServer.Tests
             }
             catch (Exception ex)
             {
-                var details = ex is EqualException ? (ex as EqualException).Actual : ex.Message;
+                var details = ex.Message;
                 TestLogs.LogInformation($"FAILED: {url} ({file}) {details}");
 
                 throw;
@@ -475,7 +477,7 @@ namespace BTCPayServer.Tests
             await ProcessLightningPayment(LightningConnectionType.LndREST);
         }
 
-        async Task ProcessLightningPayment(LightningConnectionType type)
+        async Task ProcessLightningPayment(string type)
         {
             // For easier debugging and testing
             // LightningLikePaymentHandler.LIGHTNING_TIMEOUT = int.MaxValue;
@@ -539,7 +541,7 @@ namespace BTCPayServer.Tests
 
             var pairingCode = (string)token.RouteValues["pairingCode"];
 
-            acc.BitPay.AuthorizeClient(new PairingCode(pairingCode)).GetAwaiter().GetResult();
+            await acc.BitPay.AuthorizeClient(new PairingCode(pairingCode));
             Assert.True(acc.BitPay.TestAccess(Facade.Merchant));
         }
 
@@ -603,7 +605,7 @@ namespace BTCPayServer.Tests
                             completed = true;
                             break;
                         default:
-                            Assert.False(true, $"{evtName} was not expected");
+                            Assert.Fail($"{evtName} was not expected");
                             break;
                     }
                 }
@@ -1363,7 +1365,7 @@ namespace BTCPayServer.Tests
                 }
                 catch (JsonSerializationException)
                 {
-                    Assert.False(true, "The bitpay's amount is not set");
+                    Assert.Fail("The bitpay's amount is not set");
                 }
             });
         }
@@ -2390,9 +2392,14 @@ namespace BTCPayServer.Tests
             Assert.NotNull(lnMethod.GetExternalLightningUrl());
 
             var url = lnMethod.GetExternalLightningUrl();
-            Assert.Equal(LightningConnectionType.Charge, url.ConnectionType);
-            Assert.Equal("pass", url.Password);
-            Assert.Equal("usr", url.Username);
+            var kv = LightningConnectionStringHelper.ExtractValues(url, out var connType);
+            Assert.Equal(LightningConnectionType.Charge,connType);
+            var client = Assert.IsType<ChargeClient>(tester.PayTester.GetService<LightningClientFactoryService>()
+                .Create(url, tester.NetworkProvider.GetNetwork<BTCPayNetwork>("BTC")));
+            var auth = Assert.IsType<ChargeAuthentication.UserPasswordAuthentication>(client.ChargeAuthentication);
+            
+            Assert.Equal("pass", auth.NetworkCredential.Password);
+            Assert.Equal("usr", auth.NetworkCredential.UserName);
 
             // Test if lightning connection strings get migrated to internal
             store.DerivationStrategies = new JObject()
