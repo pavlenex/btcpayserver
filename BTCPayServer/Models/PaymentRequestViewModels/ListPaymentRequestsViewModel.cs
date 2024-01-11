@@ -98,6 +98,7 @@ namespace BTCPayServer.Models.PaymentRequestViewModels
 
         public Dictionary<string, object> FormResponse { get; set; }
         public bool AmountAndCurrencyEditable { get; set; } = true;
+        public bool? HasEmailRules { get; set; }
     }
 
     public class ViewPaymentRequestViewModel
@@ -117,8 +118,6 @@ namespace BTCPayServer.Models.PaymentRequestViewModels
             EmbeddedCSS = blob.EmbeddedCSS;
             CustomCSSLink = blob.CustomCSSLink;
             AllowCustomPaymentAmounts = blob.AllowCustomPaymentAmounts;
-            if (!string.IsNullOrEmpty(EmbeddedCSS))
-                EmbeddedCSS = $"<style>{EmbeddedCSS}</style>";
             switch (data.Status)
             {
                 case Client.Models.PaymentRequestData.PaymentRequestStatus.Pending:
@@ -138,7 +137,7 @@ namespace BTCPayServer.Models.PaymentRequestViewModels
                     throw new ArgumentOutOfRangeException();
             }
         }
-
+        public StoreBrandingViewModel StoreBranding { get; set; }
         public bool AllowCustomPaymentAmounts { get; set; }
         public string Email { get; set; }
         public string Status { get; set; }
@@ -153,9 +152,6 @@ namespace BTCPayServer.Models.PaymentRequestViewModels
         public DateTime? ExpiryDate { get; set; }
         public string Title { get; set; }
         public string Description { get; set; }
-        public string LogoFileId { get; set; }
-        public string CssFileId { get; set; }
-        public string BrandColor { get; set; }
         public string StoreName { get; set; }
         public string StoreWebsite { get; set; }
         public string EmbeddedCSS { get; set; }
@@ -237,7 +233,7 @@ namespace BTCPayServer.Models.PaymentRequestViewModels
                         Amount = paymentEntity.PaidAmount.Gross,
                         Paid = paymentEntity.InvoicePaidAmount.Net,
                         ReceivedDate = paymentEntity.ReceivedTime.DateTime,
-                        AmountFormatted = displayFormatter.Currency(paymentEntity.PaidAmount.Gross, paymentEntity.PaidAmount.Currency, DisplayFormatter.CurrencyFormat.None),
+                        AmountFormatted = displayFormatter.Currency(paymentEntity.PaidAmount.Gross, paymentEntity.PaidAmount.Currency),
                         PaidFormatted = displayFormatter.Currency(paymentEntity.InvoicePaidAmount.Net, invoice.Currency, DisplayFormatter.CurrencyFormat.Symbol),
                         RateFormatted = displayFormatter.Currency(paymentEntity.Rate, invoice.Currency, DisplayFormatter.CurrencyFormat.Symbol),
                         PaymentMethod = paymentMethodId.ToPrettyString(),

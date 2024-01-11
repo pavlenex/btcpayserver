@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Contracts;
@@ -28,6 +29,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
 using Xunit.Abstractions;
+using Xunit.Sdk;
 using CreateApplicationUserRequest = BTCPayServer.Client.Models.CreateApplicationUserRequest;
 
 namespace BTCPayServer.Tests
@@ -1084,7 +1086,39 @@ namespace BTCPayServer.Tests
             Assert.IsType<string>(lnrURLs.LNURLUri);
             Assert.Equal(12.303228134m, test4.Amount);
             Assert.Equal("BTC", test4.Currency);
-            
+
+            // Check we can register Boltcard
+            var uid = new byte[7];
+            RandomNumberGenerator.Fill(uid);
+            var card = await client.RegisterBoltcard(test4.Id, new RegisterBoltcardRequest()
+            {
+                UID = uid
+            });
+            Assert.Equal(0, card.Version);
+            var card1keys = new[] { card.K0, card.K1, card.K2, card.K3, card.K4 };
+            Assert.DoesNotContain(null, card1keys);
+            var card2 = await client.RegisterBoltcard(test4.Id, new RegisterBoltcardRequest()
+            {
+                UID = uid
+            });
+            Assert.Equal(1, card2.Version);
+            Assert.StartsWith("lnurlw://", card2.LNURLW);
+            Assert.EndsWith("/boltcard", card2.LNURLW);
+            var card2keys = new[] { card2.K0, card2.K1, card2.K2, card2.K3, card2.K4 };
+            Assert.DoesNotContain(null, card2keys);
+            for (int i = 0; i < card1keys.Length; i++)
+            {
+                if (i == 1)
+                    Assert.Contains(card1keys[i], card2keys);
+                else
+                    Assert.DoesNotContain(card1keys[i], card2keys);
+            }
+            var card3 = await client.RegisterBoltcard(test4.Id, new RegisterBoltcardRequest()
+            {
+                UID = uid,
+                OnExisting = OnExistingBehavior.KeepVersion
+            });
+            Assert.Equal(card2.Version, card3.Version);
             // Test with SATS denomination values
             var testSats = await client.CreatePullPayment(storeId, new Client.Models.CreatePullPaymentRequest()
             {
@@ -2099,18 +2133,18 @@ namespace BTCPayServer.Tests
             //validation errors
             await AssertValidationError(new[] { nameof(CreateInvoiceRequest.Amount), $"{nameof(CreateInvoiceRequest.Checkout)}.{nameof(CreateInvoiceRequest.Checkout.PaymentTolerance)}", $"{nameof(CreateInvoiceRequest.Checkout)}.{nameof(CreateInvoiceRequest.Checkout.PaymentMethods)}[0]" }, async () =>
             {
-                await client.CreateInvoice(user.StoreId, new CreateInvoiceRequest() { Amount = -1, Checkout = new CreateInvoiceRequest.CheckoutOptions() { PaymentTolerance = -2, PaymentMethods = new[] { "jasaas_sdsad" } } });
+                await client.CreateInvoice(user.StoreId, new CreateInvoiceRequest { Amount = -1, Checkout = new CreateInvoiceRequest.CheckoutOptions { PaymentTolerance = -2, PaymentMethods = new[] { "jasaas_sdsad" } } });
             });
 
             await AssertHttpError(403, async () =>
             {
                 await viewOnly.CreateInvoice(user.StoreId,
-                    new CreateInvoiceRequest() { Currency = "helloinvalid", Amount = 1 });
+                    new CreateInvoiceRequest { Currency = "helloinvalid", Amount = 1 });
             });
             await user.RegisterDerivationSchemeAsync("BTC");
             string origOrderId = "testOrder";
             var newInvoice = await client.CreateInvoice(user.StoreId,
-                new CreateInvoiceRequest()
+                new CreateInvoiceRequest
                 {
                     Currency = "USD",
                     Amount = 1,
@@ -2197,7 +2231,7 @@ namespace BTCPayServer.Tests
 
             //list NonExisting Status
             var invoicesNonExistingStatus = await viewOnly.GetInvoices(user.StoreId,
-                status: new[] { BTCPayServer.Client.Models.InvoiceStatus.Invalid });
+                status: new[] { InvoiceStatus.Invalid });
             Assert.NotNull(invoicesNonExistingStatus);
             Assert.Empty(invoicesNonExistingStatus);
 
@@ -2215,7 +2249,7 @@ namespace BTCPayServer.Tests
 
             //update
             newInvoice = await client.CreateInvoice(user.StoreId,
-                new CreateInvoiceRequest() { Currency = "USD", Amount = 1 });
+                new CreateInvoiceRequest { Currency = "USD", Amount = 1 });
             Assert.Contains(InvoiceStatus.Settled, newInvoice.AvailableStatusesForManualMarking);
             Assert.Contains(InvoiceStatus.Invalid, newInvoice.AvailableStatusesForManualMarking);
             await client.MarkInvoiceStatus(user.StoreId, newInvoice.Id, new MarkInvoiceStatusRequest()
@@ -2227,7 +2261,7 @@ namespace BTCPayServer.Tests
             Assert.DoesNotContain(InvoiceStatus.Settled, newInvoice.AvailableStatusesForManualMarking);
             Assert.Contains(InvoiceStatus.Invalid, newInvoice.AvailableStatusesForManualMarking);
             newInvoice = await client.CreateInvoice(user.StoreId,
-                new CreateInvoiceRequest() { Currency = "USD", Amount = 1 });
+                new CreateInvoiceRequest { Currency = "USD", Amount = 1 });
             await client.MarkInvoiceStatus(user.StoreId, newInvoice.Id, new MarkInvoiceStatusRequest()
             {
                 Status = InvoiceStatus.Invalid
@@ -2242,13 +2276,13 @@ namespace BTCPayServer.Tests
             await AssertHttpError(403, async () =>
             {
                 await viewOnly.UpdateInvoice(user.StoreId, invoice.Id,
-                    new UpdateInvoiceRequest()
+                    new UpdateInvoiceRequest
                     {
                         Metadata = metadataForUpdate
                     });
             });
             invoice = await client.UpdateInvoice(user.StoreId, invoice.Id,
-                new UpdateInvoiceRequest()
+                new UpdateInvoiceRequest
                 {
                     Metadata = metadataForUpdate
                 });
@@ -2288,13 +2322,12 @@ namespace BTCPayServer.Tests
             await client.UnarchiveInvoice(user.StoreId, invoice.Id);
             Assert.NotNull(await client.GetInvoice(user.StoreId, invoice.Id));
 
-
             foreach (var marked in new[] { InvoiceStatus.Settled, InvoiceStatus.Invalid })
             {
                 var inv = await client.CreateInvoice(user.StoreId,
-                new CreateInvoiceRequest() { Currency = "USD", Amount = 100 });
+                new CreateInvoiceRequest { Currency = "USD", Amount = 100 });
                 await user.PayInvoice(inv.Id);
-                await client.MarkInvoiceStatus(user.StoreId, inv.Id, new MarkInvoiceStatusRequest()
+                await client.MarkInvoiceStatus(user.StoreId, inv.Id, new MarkInvoiceStatusRequest
                 {
                     Status = marked
                 });
@@ -2322,13 +2355,12 @@ namespace BTCPayServer.Tests
                 }
             }
 
-
             newInvoice = await client.CreateInvoice(user.StoreId,
-                new CreateInvoiceRequest()
+                new CreateInvoiceRequest
                 {
                     Currency = "USD",
                     Amount = 1,
-                    Checkout = new CreateInvoiceRequest.CheckoutOptions()
+                    Checkout = new CreateInvoiceRequest.CheckoutOptions
                     {
                         DefaultLanguage = "it-it ",
                         RedirectURL = "http://toto.com/lol"
@@ -3785,9 +3817,19 @@ namespace BTCPayServer.Tests
                 {
                     case "before-automated-payout-processing":
                         beforeHookTcs.TrySetResult();
+                        var bd = (BeforePayoutActionData)tuple.args;
+                        foreach (var p in bd.Payouts)
+                        {
+                            TestLogs.LogInformation("Before Processed: " + p.Id);
+                        }
                         break;
                     case "after-automated-payout-processing":
                         afterHookTcs.TrySetResult();
+                        var ad = (AfterPayoutActionData)tuple.args;
+                        foreach (var p in ad.Payouts)
+                        {
+                            TestLogs.LogInformation("After Processed: " + p.Id);
+                        }
                         break;
                 }
             };
@@ -3802,7 +3844,21 @@ namespace BTCPayServer.Tests
             await beforeHookTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await afterHookTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
             payouts = await adminClient.GetStorePayouts(admin.StoreId);
-            Assert.Single(payouts.Where(data => data.State == PayoutState.InProgress && data.Id == payoutThatShouldBeProcessedStraightAway.Id));
+            try
+            {
+                Assert.Single(payouts.Where(data => data.State == PayoutState.InProgress && data.Id == payoutThatShouldBeProcessedStraightAway.Id));
+            }
+            catch (SingleException)
+            {
+                TestLogs.LogInformation("Debugging flaky test...");
+                TestLogs.LogInformation("payoutThatShouldBeProcessedStraightAway: " + payoutThatShouldBeProcessedStraightAway.Id);
+                foreach (var p in payouts)
+                {
+                    TestLogs.LogInformation("Payout Id: " + p.Id);
+                    TestLogs.LogInformation("Payout State: " + p.State);
+                }
+                throw;
+            }
             
             beforeHookTcs = new TaskCompletionSource();
             afterHookTcs = new TaskCompletionSource();
@@ -4475,7 +4531,7 @@ clientBasic.PreviewUpdateStoreRateConfiguration(user.StoreId, new StoreRateConfi
             await AssertHttpError(404, async () => await withdrawalClient.SimulateCustodianAccountWithdrawal(storeId, "WRONG-ACCOUNT-ID", simulateWithdrawalRequest));
 
             // Test: SimulateWithdrawal, wrong store ID
-            // TODO it is wierd that 403 is considered normal, but it is like this for all calls where the store is wrong... I'd have preferred a 404 error, because the store cannot be found.
+            // TODO it is weird that 403 is considered normal, but it is like this for all calls where the store is wrong... I'd have preferred a 404 error, because the store cannot be found.
             await AssertHttpError(403, async () => await withdrawalClient.SimulateCustodianAccountWithdrawal("WRONG-STORE-ID", accountId, simulateWithdrawalRequest));
 
             // Test: SimulateWithdrawal, correct payment method, wrong amount
@@ -4506,7 +4562,7 @@ clientBasic.PreviewUpdateStoreRateConfiguration(user.StoreId, new StoreRateConfi
             await AssertHttpError(404, async () => await withdrawalClient.CreateCustodianAccountWithdrawal(storeId, "WRONG-ACCOUNT-ID", createWithdrawalRequest));
 
             // Test: CreateWithdrawal, wrong store ID
-            // TODO it is wierd that 403 is considered normal, but it is like this for all calls where the store is wrong... I'd have preferred a 404 error, because the store cannot be found.
+            // TODO it is weird that 403 is considered normal, but it is like this for all calls where the store is wrong... I'd have preferred a 404 error, because the store cannot be found.
             await AssertHttpError(403, async () => await withdrawalClient.CreateCustodianAccountWithdrawal("WRONG-STORE-ID", accountId, createWithdrawalRequest));
 
             // Test: CreateWithdrawal, correct payment method, wrong amount

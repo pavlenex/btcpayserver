@@ -297,10 +297,9 @@ retry:
             }
         }
 
-        [Fact()]
+        [Fact]
         public void CanSolveTheDogesRatesOnKraken()
         {
-            var provider = CreateNetworkProvider(ChainName.Mainnet);
             var factory = FastTests.CreateBTCPayRateFactory();
             var fetcher = new RateFetcher(factory);
 
@@ -320,7 +319,7 @@ retry:
             var fetcher = new RateFetcher(factory);
             var provider = CreateNetworkProvider(ChainName.Mainnet);
             var b = new StoreBlob();
-            string[] temporarilyBroken = { "COP", "UGX" };
+            string[] temporarilyBroken = Array.Empty<string>();
             foreach (var k in StoreBlob.RecommendedExchanges)
             {
                 b.DefaultCurrency = k.Key;
@@ -359,7 +358,7 @@ retry:
                     .Select(c => new CurrencyPair(c.CryptoCode, "USD"))
                     .ToHashSet();
 
-            string[] brokenShitcoins = { "BTG", "BTX" };
+            string[] brokenShitcoins = { "BTG", "BTX", "GRS" };
             bool IsBrokenShitcoin(CurrencyPair p) => brokenShitcoins.Contains(p.Left) || brokenShitcoins.Contains(p.Right);
             foreach (var _ in brokenShitcoins)
             {

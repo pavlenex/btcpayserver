@@ -1,5 +1,4 @@
 using System;
-using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -99,14 +98,25 @@ namespace BTCPayServer.Tests
             Driver.FindElement(By.Id("FakePayment")).Click();
             if (mine)
             {
+                TestUtils.Eventually(() =>
+                {
+                    Driver.WaitForElement(By.Id("CheatSuccessMessage"));
+                });
                 MineBlockOnInvoiceCheckout();
             }
         }
 
         public void MineBlockOnInvoiceCheckout()
         {
-            Driver.FindElement(By.CssSelector("#mine-block button")).Click();
-
+            retry:
+            try
+            {
+                Driver.FindElement(By.CssSelector("#mine-block button")).Click();
+            }
+            catch (StaleElementReferenceException)
+            {
+                goto retry;
+            }
         }
 
         /// <summary>
