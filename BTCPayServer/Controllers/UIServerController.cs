@@ -16,19 +16,16 @@ using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Configuration;
 using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
-using BTCPayServer.Hosting;
 using BTCPayServer.Logging;
-using BTCPayServer.Models;
 using BTCPayServer.Models.ServerViewModels;
+using BTCPayServer.Models.StoreViewModels;
 using BTCPayServer.Payments;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Mails;
 using BTCPayServer.Services.Stores;
-using BTCPayServer.Storage.Models;
 using BTCPayServer.Storage.Services;
 using BTCPayServer.Storage.Services.Providers;
-using BTCPayServer.Validation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Identity;
@@ -120,6 +117,26 @@ namespace BTCPayServer.Controllers
             ApplicationLifetime = applicationLifetime;
             Html = html;
             _transactionLinkProviders = transactionLinkProviders;
+        }
+
+        [HttpGet("server/stores")]
+        public async Task<IActionResult> ListStores()
+        {
+            var stores = await _StoreRepository.GetStores();
+            var vm = new ListStoresViewModel
+            {
+                Stores = stores
+                    .Select(s => new ListStoresViewModel.StoreViewModel
+                    {
+                        StoreId = s.Id,
+                        StoreName = s.StoreName,
+                        Archived = s.Archived,
+                        Users = s.UserStores
+                    })
+                    .OrderBy(s => !s.Archived)
+                    .ToList()
+            };
+            return View(vm);
         }
 
         [HttpGet("server/maintenance")]
@@ -1159,7 +1176,7 @@ namespace BTCPayServer.Controllers
             return View(vm);
         }
 
-        [Route("server/emails")]
+        [HttpGet("server/emails")]
         public async Task<IActionResult> Emails()
         {
             var email = await _SettingsRepository.GetSettingAsync<EmailSettings>() ?? new EmailSettings();
@@ -1170,8 +1187,7 @@ namespace BTCPayServer.Controllers
             return View(vm);
         }
 
-        [Route("server/emails")]
-        [HttpPost]
+        [HttpPost("server/emails")]
         public async Task<IActionResult> Emails(ServerEmailsViewModel model, string command)
         {
             if (command == "Test")
@@ -1225,7 +1241,7 @@ namespace BTCPayServer.Controllers
                 return View(model);
             }
             var oldSettings = await _SettingsRepository.GetSettingAsync<EmailSettings>() ?? new EmailSettings();
-            if (new EmailsViewModel(oldSettings).PasswordSet)
+            if (new ServerEmailsViewModel(oldSettings).PasswordSet)
             {
                 model.Settings.Password = oldSettings.Password;
             }
