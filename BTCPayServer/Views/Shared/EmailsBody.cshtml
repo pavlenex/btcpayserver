@@ -1,3 +1,6 @@
+@using BTCPayServer.Client
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@using BTCPayServer.Abstractions.TagHelpers
 @model BTCPayServer.Models.EmailsViewModel
 
 <div class="row">
@@ -41,7 +44,7 @@
             <div class="form-text">For many email providers (like Gmail) your login is your email address.</div>
             <span asp-validation-for="Settings.Login" class="text-danger"></span>
         </div>
-        <div class="form-group">
+        <div class="form-group" permission="@Policies.CanModifyStoreSettings">
             @if (!Model.PasswordSet)
             {
                 <label asp-for="Settings.Password" class="form-label"></label>
@@ -65,35 +68,20 @@
             </button>
             <div id="AdvancedSettings" class="collapse">
                 <div class="pt-3 pb-1">
-                    <div class="form-group">
-                        <div class="form-check">
-                            <input asp-for="Settings.DisableCertificateCheck" class="form-check-input" />
-                            <label asp-for="Settings.DisableCertificateCheck" class="form-check-label">Disable TLS certificate security checks</label>
-                        </div>
+                    <div class="d-flex">
+                        <input asp-for="Settings.EnabledCertificateCheck" type="checkbox" class="btcpay-toggle me-3" />
+                        <label asp-for="Settings.EnabledCertificateCheck" class="form-check-label">TLS certificate security checks</label>
                     </div>
                 </div>
             </div>
         </div>
-        <button type="submit" class="btn btn-primary mt-2" name="command" value="Save" id="Save">Save</button>
-    </div>
-</div>
-<div class="row">
-    <div class="col-xl-10 col-xxl-constrain">
-        <div class="form-group">
-            <h3 class="mt-5 mb-3">Testing</h3>
-            <p>
-                To test your settings, enter an email address below.
-            </p>
-            <label asp-for="TestEmail" class="form-label"></label>
-            <input asp-for="TestEmail" placeholder="Firstname Lastname <email@example.com>" class="form-control" />
-            <span asp-validation-for="TestEmail" class="text-danger"></span>
-        </div>
-        <button type="submit" class="btn btn-secondary mt-2" name="command" value="Test" id="Test">Send Test Email</button>
+        <button type="submit" class="btn btn-primary mt-2" name="command" value="Save" id="Save" permission="@Policies.CanModifyStoreSettings">Save</button>
     </div>
 </div>
 
 <script>
     document.addEventListener("DOMContentLoaded", function () {
+
         delegate('click', '#quick-fill .dropdown-menu a', function (e) {
             e.preventDefault();
             
