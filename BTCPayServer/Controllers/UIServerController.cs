@@ -1049,11 +1049,22 @@ namespace BTCPayServer.Controllers
             vm.LogoFileId = theme.LogoFileId;
             vm.CustomThemeFileId = theme.CustomThemeFileId;
             
-            if (server.ServerName != vm.ServerName || server.ContactUrl != vm.ContactUrl)
+            if (server.ServerName != vm.ServerName)
             {
                 server.ServerName = vm.ServerName;
-                server.ContactUrl = vm.ContactUrl;
                 settingsChanged = true;
+            }
+            
+            if (server.ContactUrl != vm.ContactUrl)
+            {
+                server.ContactUrl = !string.IsNullOrWhiteSpace(vm.ContactUrl)
+                    ? vm.ContactUrl.IsValidEmail() ? $"mailto:{vm.ContactUrl}" : vm.ContactUrl
+                    : null;
+                settingsChanged = true;
+            }
+            
+            if (settingsChanged)
+            {
                 await _SettingsRepository.UpdateSetting(server);
             }
 
@@ -1204,8 +1215,10 @@ namespace BTCPayServer.Controllers
                         ModelState.AddModelError(nameof(model.TestEmail), new RequiredAttribute().FormatErrorMessage(nameof(model.TestEmail)));
                     if (!ModelState.IsValid)
                         return View(model);
+                    var serverSettings = await _SettingsRepository.GetSettingAsync<ServerSettings>();
+                    var serverName = string.IsNullOrEmpty(serverSettings?.ServerName) ? "BTCPay Server" : serverSettings.ServerName;
                     using (var client = await model.Settings.CreateSmtpClient())
-                    using (var message = model.Settings.CreateMailMessage(MailboxAddress.Parse(model.TestEmail), "BTCPay test", "BTCPay test", false))
+                    using (var message = model.Settings.CreateMailMessage(MailboxAddress.Parse(model.TestEmail), $"{serverName}: Email test", "You received it, the BTCPay Server SMTP settings work.", false))
                     {
                         await client.SendAsync(message);
                         await client.DisconnectAsync(true);
