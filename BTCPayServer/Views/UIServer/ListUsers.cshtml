@@ -10,21 +10,16 @@
         _ => null
     };
 
-    var sortIconClass = "fa-sort";
-    if (userEmailSortOrder != null)
-    {
-        sortIconClass = $"fa-sort-alpha-{userEmailSortOrder}";
-    }
-
-    const string sortByDesc = "Sort by descending...";
-    const string sortByAsc = "Sort by ascending...";
+    const string sortByDesc = "Sort by email descending...";
+    const string sortByAsc = "Sort by email ascending...";
 }
-<div class="d-flex align-items-center justify-content-between mb-3">
-    <h3 class="mb-0">@ViewData["Title"]</h3>
+<div class="sticky-header">
+    <h2>@ViewData["Title"]</h2>
     <a asp-action="CreateUser" class="btn btn-primary" role="button" id="CreateUser">
         Add User
     </a>
 </div>
+<partial name="_StatusMessage" />
 
 <form asp-action="ListUsers" asp-route-sortOrder="@(userEmailSortOrder)" style="max-width:640px" method="get">
     <input asp-for="SearchTerm" class="form-control" placeholder="Search by email..." />
@@ -42,7 +37,7 @@
                     title="@(nextUserEmailSortOrder == "desc" ? sortByAsc : sortByDesc)"
                 >
                     Email
-                    <span class="fa @(sortIconClass)"></span>
+                    <vc:icon symbol="actions-sort-alpha-@(userEmailSortOrder ?? nextUserEmailSortOrder ?? "desc")" />
                 </a>
             </th>
             <th>Stores</th>

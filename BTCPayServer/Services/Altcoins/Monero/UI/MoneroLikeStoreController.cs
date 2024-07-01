@@ -20,6 +20,7 @@ using BTCPayServer.Services.Altcoins.Monero.Configuration;
 using BTCPayServer.Services.Altcoins.Monero.Payments;
 using BTCPayServer.Services.Altcoins.Monero.RPC.Models;
 using BTCPayServer.Services.Altcoins.Monero.Services;
+using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -38,15 +39,18 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
         private readonly MoneroLikeConfiguration _MoneroLikeConfiguration;
         private readonly StoreRepository _StoreRepository;
         private readonly MoneroRPCProvider _MoneroRpcProvider;
+        private readonly PaymentMethodHandlerDictionary _handlers;
         private readonly BTCPayNetworkProvider _BtcPayNetworkProvider;
 
         public UIMoneroLikeStoreController(MoneroLikeConfiguration moneroLikeConfiguration,
             StoreRepository storeRepository, MoneroRPCProvider moneroRpcProvider,
+            PaymentMethodHandlerDictionary handlers,
             BTCPayNetworkProvider btcPayNetworkProvider)
         {
             _MoneroLikeConfiguration = moneroLikeConfiguration;
             _StoreRepository = storeRepository;
             _MoneroRpcProvider = moneroRpcProvider;
+            _handlers = handlers;
             _BtcPayNetworkProvider = btcPayNetworkProvider;
         }
 
@@ -60,9 +64,6 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
 [NonAction]
         public async Task<MoneroLikePaymentMethodListViewModel> GetVM(StoreData storeData)
         {
-            var monero = storeData.GetSupportedPaymentMethods(_BtcPayNetworkProvider)
-                .OfType<MoneroSupportedPaymentMethod>();
-
             var excludeFilters = storeData.GetStoreBlob().GetExcludedPaymentMethods();
 
             var accountsList = _MoneroLikeConfiguration.MoneroLikeConfigurationItems.ToDictionary(pair => pair.Key,
@@ -72,7 +73,7 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
             return new MoneroLikePaymentMethodListViewModel()
             {
                 Items = _MoneroLikeConfiguration.MoneroLikeConfigurationItems.Select(pair =>
-                    GetMoneroLikePaymentMethodViewModel(monero, pair.Key, excludeFilters,
+                    GetMoneroLikePaymentMethodViewModel(storeData, pair.Key, excludeFilters,
                         accountsList[pair.Key].Result))
             };
         }
@@ -92,10 +93,14 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
         }
 
         private MoneroLikePaymentMethodViewModel GetMoneroLikePaymentMethodViewModel(
-            IEnumerable<MoneroSupportedPaymentMethod> monero, string cryptoCode,
+            StoreData storeData, string cryptoCode,
             IPaymentFilter excludeFilters, GetAccountsResponse accountsResponse)
         {
-            var settings = monero.SingleOrDefault(method => method.CryptoCode == cryptoCode);
+            var monero = storeData.GetPaymentMethodConfigs(_handlers)
+                .Where(s => s.Value is MoneroPaymentPromptDetails)
+                .Select(s => (PaymentMethodId: s.Key, Details: (MoneroPaymentPromptDetails)s.Value));
+            var pmi = PaymentTypes.CHAIN.GetPaymentMethodId(cryptoCode);
+            var settings = monero.Where(method => method.PaymentMethodId == pmi).Select(m => m.Details).SingleOrDefault();
             _MoneroRpcProvider.Summaries.TryGetValue(cryptoCode, out var summary);
             _MoneroLikeConfiguration.MoneroLikeConfigurationItems.TryGetValue(cryptoCode,
                 out var configurationItem);
@@ -104,29 +109,36 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
                 new SelectListItem(
                     $"{account.AccountIndex} - {(string.IsNullOrEmpty(account.Label) ? "No label" : account.Label)}",
                     account.AccountIndex.ToString(CultureInfo.InvariantCulture)));
-            var settlementThresholdChoice = settings.InvoiceSettledConfirmationThreshold switch
+
+            var settlementThresholdChoice = MoneroLikeSettlementThresholdChoice.StoreSpeedPolicy;
+            if (settings != null && settings.InvoiceSettledConfirmationThreshold is { } confirmations)
             {
-                null => MoneroLikeSettlementThresholdChoice.StoreSpeedPolicy,
-                0 => MoneroLikeSettlementThresholdChoice.ZeroConfirmation,
-                1 => MoneroLikeSettlementThresholdChoice.AtLeastOne,
-                10 => MoneroLikeSettlementThresholdChoice.AtLeastTen,
-                _ => MoneroLikeSettlementThresholdChoice.Custom
-            };
+                settlementThresholdChoice = confirmations switch
+                {
+                    0 => MoneroLikeSettlementThresholdChoice.ZeroConfirmation,
+                    1 => MoneroLikeSettlementThresholdChoice.AtLeastOne,
+                    10 => MoneroLikeSettlementThresholdChoice.AtLeastTen,
+                    _ => MoneroLikeSettlementThresholdChoice.Custom
+                };
+            }
+
             return new MoneroLikePaymentMethodViewModel()
             {
                 WalletFileFound = System.IO.File.Exists(fileAddress),
                 Enabled =
                     settings != null &&
-                    !excludeFilters.Match(new PaymentMethodId(cryptoCode, MoneroPaymentType.Instance)),
+                    !excludeFilters.Match(PaymentTypes.CHAIN.GetPaymentMethodId(cryptoCode)),
                 Summary = summary,
                 CryptoCode = cryptoCode,
                 AccountIndex = settings?.AccountIndex ?? accountsResponse?.SubaddressAccounts?.FirstOrDefault()?.AccountIndex ?? 0,
                 Accounts = accounts == null ? null : new SelectList(accounts, nameof(SelectListItem.Value),
                     nameof(SelectListItem.Text)),
                 SettlementConfirmationThresholdChoice = settlementThresholdChoice,
-                CustomSettlementConfirmationThreshold = settlementThresholdChoice is MoneroLikeSettlementThresholdChoice.Custom
-                    ? settings.InvoiceSettledConfirmationThreshold
-                    : null
+                CustomSettlementConfirmationThreshold =
+                    settings != null &&
+                    settlementThresholdChoice is MoneroLikeSettlementThresholdChoice.Custom
+                        ? settings.InvoiceSettledConfirmationThreshold
+                        : null
             };
         }
 
@@ -139,8 +151,7 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
                 return NotFound();
             }
 
-            var vm = GetMoneroLikePaymentMethodViewModel(StoreData.GetSupportedPaymentMethods(_BtcPayNetworkProvider)
-                    .OfType<MoneroSupportedPaymentMethod>(), cryptoCode,
+            var vm = GetMoneroLikePaymentMethodViewModel(StoreData, cryptoCode,
                 StoreData.GetStoreBlob().GetExcludedPaymentMethods(), await GetAccounts(cryptoCode));
             return View(nameof(GetStoreMoneroLikePaymentMethod), vm);
         }
@@ -242,10 +253,28 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
                         }
                     }
 
+                    try
+                    {
+                        var response = await _MoneroRpcProvider.WalletRpcClients[cryptoCode].SendCommandAsync<OpenWalletRequest, OpenWalletResponse>("open_wallet", new OpenWalletRequest
+                        {
+                            Filename = "wallet",
+                            Password = viewModel.WalletPassword
+                        });
+                        if (response?.Error != null)
+                        {
+                            throw new Exception(response.Error.Message);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ModelState.AddModelError(nameof(viewModel.AccountIndex), $"Could not open the wallet: {ex.Message}");
+                        return View(viewModel);
+                    }
+
                     return RedirectToAction(nameof(GetStoreMoneroLikePaymentMethod), new
                     {
                         cryptoCode,
-                        StatusMessage = "View-only wallet files uploaded. If they are valid the wallet will soon become available."
+                        StatusMessage = "View-only wallet files uploaded. The wallet will soon become available."
 
                     });
                 }
@@ -254,9 +283,7 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
             if (!ModelState.IsValid)
             {
 
-                var vm = GetMoneroLikePaymentMethodViewModel(StoreData
-                        .GetSupportedPaymentMethods(_BtcPayNetworkProvider)
-                        .OfType<MoneroSupportedPaymentMethod>(), cryptoCode,
+                var vm = GetMoneroLikePaymentMethodViewModel(StoreData, cryptoCode,
                     StoreData.GetStoreBlob().GetExcludedPaymentMethods(), await GetAccounts(cryptoCode));
 
                 vm.Enabled = viewModel.Enabled;
@@ -269,10 +296,9 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
 
             var storeData = StoreData;
             var blob = storeData.GetStoreBlob();
-            storeData.SetSupportedPaymentMethod(new MoneroSupportedPaymentMethod()
+            storeData.SetPaymentMethodConfig(_handlers[PaymentTypes.CHAIN.GetPaymentMethodId(cryptoCode)], new MoneroPaymentPromptDetails()
             {
                 AccountIndex = viewModel.AccountIndex,
-                CryptoCode = viewModel.CryptoCode,
                 InvoiceSettledConfirmationThreshold = viewModel.SettlementConfirmationThresholdChoice switch
                 {
                     MoneroLikeSettlementThresholdChoice.ZeroConfirmation => 0,
@@ -283,7 +309,7 @@ namespace BTCPayServer.Services.Altcoins.Monero.UI
                 }
             });
 
-            blob.SetExcluded(new PaymentMethodId(viewModel.CryptoCode, MoneroPaymentType.Instance), !viewModel.Enabled);
+            blob.SetExcluded(PaymentTypes.CHAIN.GetPaymentMethodId(viewModel.CryptoCode), !viewModel.Enabled);
             storeData.SetStoreBlob(blob);
             await _StoreRepository.UpdateStore(storeData);
             return RedirectToAction("GetStoreMoneroLikePaymentMethods",

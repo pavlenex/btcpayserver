@@ -18,7 +18,6 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.DevTools.V100.Network;
 using OpenQA.Selenium.Support.UI;
 using Xunit;
 using Xunit.Abstractions;
@@ -522,15 +521,7 @@ retry:
         {
             var fullPath = Path.Combine(GetFolder(folder), $"{lang}.json");
             var proj = "o:btcpayserver:p:btcpayserver";
-            string resource;
-            if (folder == TranslationFolder.CheckoutV1)
-            {
-                resource = $"{proj}:r:enjson";
-            }
-            else // file == v2
-            {
-                resource = $"{proj}:r:checkout-v2";
-            }
+            var resource = $"{proj}:r:checkout-v2";
             var words = new Dictionary<string, string>();
             if (File.Exists(fullPath))
             {

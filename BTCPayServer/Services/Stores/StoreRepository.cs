@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Client;
@@ -61,6 +62,7 @@ namespace BTCPayServer.Services.Stores
             public string Id { get; set; }
             public string Email { get; set; }
             public StoreRole StoreRole { get; set; }
+            public UserBlob UserBlob { get; set; }
         }
 
         public class StoreRole
@@ -188,7 +190,7 @@ namespace BTCPayServer.Services.Stores
                     .Select(u => new
                     {
                         Id = u.ApplicationUserId,
-                        u.ApplicationUser.Email,
+                        u.ApplicationUser,
                         u.StoreRole
                     })
                     .Where(u => roles == null || roles.Contains(u.StoreRole.Id))
@@ -196,7 +198,8 @@ namespace BTCPayServer.Services.Stores
                     {
                         StoreRole = ToStoreRole(arg.StoreRole),
                         Id = arg.Id,
-                        Email = arg.Email
+                        Email = arg.ApplicationUser.Email,
+                        UserBlob = arg.ApplicationUser.GetBlob() ?? new()
                     }).ToArray();
         }
 
@@ -248,7 +251,7 @@ namespace BTCPayServer.Services.Stores
         /// `role` can be passed in two format:
         /// STOREID::ROLE or ROLE.
         /// If the first case, this method make sure the storeId is same as <paramref name="storeId"/>.
-        /// In the second case, we interprete ROLE as a server level roleId first, then if it does not exist, check if there is a store level role.
+        /// In the second case, we interpret ROLE as a server level roleId first, then if it does not exist, check if there is a store level role.
         /// </summary>
         /// <param name="storeId"></param>
         /// <param name="role"></param>
@@ -335,8 +338,6 @@ namespace BTCPayServer.Services.Stores
         public async Task CleanUnreachableStores()
         {
             await using var ctx = _ContextFactory.CreateContext();
-            if (!ctx.Database.SupportDropForeignKey())
-                return;
             var events = new List<Events.StoreRemovedEvent>();
             foreach (var store in await ctx.Stores.Include(data => data.UserStores)
                          .ThenInclude(store => store.StoreRole).Where(s =>
@@ -368,17 +369,14 @@ namespace BTCPayServer.Services.Stores
         private async Task DeleteStoreIfOrphan(string storeId)
         {
             await using var ctx = _ContextFactory.CreateContext();
-            if (ctx.Database.SupportDropForeignKey())
+            if (!await ctx.UserStore.Where(u => u.StoreDataId == storeId && u.StoreRole.Permissions.Contains(Policies.CanModifyStoreSettings)).AnyAsync())
             {
-                if (!await ctx.UserStore.Where(u => u.StoreDataId == storeId && u.StoreRole.Permissions.Contains(Policies.CanModifyStoreSettings)).AnyAsync())
+                var store = await ctx.Stores.FindAsync(storeId);
+                if (store != null)
                 {
-                    var store = await ctx.Stores.FindAsync(storeId);
-                    if (store != null)
-                    {
-                        ctx.Stores.Remove(store);
-                        await ctx.SaveChangesAsync();
-                        _eventAggregator.Publish(new StoreRemovedEvent(store.Id));
-                    }
+                    ctx.Stores.Remove(store);
+                    await ctx.SaveChangesAsync();
+                    _eventAggregator.Publish(new StoreRemovedEvent(store.Id));
                 }
             }
         }
@@ -559,8 +557,6 @@ namespace BTCPayServer.Services.Stores
         {
             int retry = 0;
             using var ctx = _ContextFactory.CreateContext();
-            if (!ctx.Database.SupportDropForeignKey())
-                return false;
             var store = await ctx.Stores.FindAsync(storeId);
             if (store == null)
                 return false;
@@ -640,12 +636,6 @@ retry:
         private static bool IsDeadlock(DbUpdateException ex)
         {
             return ex.InnerException is Npgsql.PostgresException postgres && postgres.SqlState == "40P01";
-        }
-
-        public bool CanDeleteStores()
-        {
-            using var ctx = _ContextFactory.CreateContext();
-            return ctx.Database.SupportDropForeignKey();
         }
     }
 
