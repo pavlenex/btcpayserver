@@ -2247,6 +2247,17 @@ namespace BTCPayServer.Tests
             Assert.Equal("BTC", pp.Currency);
             Assert.True(pp.AutoApproveClaims);
             Assert.Equal(0.79m, pp.Amount);
+
+            // If an invoice doesn't have payment because it has been marked as paid, we should still be able to refund it.
+            invoice = await client.CreateInvoice(user.StoreId, new CreateInvoiceRequest { Amount = 5000.0m, Currency = "USD" });
+            await client.MarkInvoiceStatus(user.StoreId, invoice.Id, new MarkInvoiceStatusRequest { Status = InvoiceStatus.Settled });
+            var refund = await client.RefundInvoice(user.StoreId, invoice.Id, new RefundInvoiceRequest
+            {
+                PaymentMethod = method.PaymentMethodId,
+                RefundVariant = RefundVariant.CurrentRate
+            });
+            Assert.Equal(1.0m, refund.Amount);
+            Assert.Equal("BTC", refund.Currency);
         }
 
         [Fact(Timeout = TestTimeout)]
@@ -3594,6 +3605,7 @@ namespace BTCPayServer.Tests
             var store2 = (await adminClient.CreateStore(new CreateStoreRequest() { Name = "test2" })).Id;
             var address1 = Guid.NewGuid().ToString("n").Substring(0, 8);
             var address2 = Guid.NewGuid().ToString("n").Substring(0, 8);
+            var address3 = Guid.NewGuid().ToString("n").Substring(0, 8);
 
             Assert.Empty(await adminClient.GetStoreLightningAddresses(store.Id));
             Assert.Empty(await adminClient.GetStoreLightningAddresses(store2));
@@ -3621,6 +3633,17 @@ namespace BTCPayServer.Tests
             await adminClient.RemoveStoreLightningAddress(store2, address2);
 
             Assert.Empty(await adminClient.GetStoreLightningAddresses(store2));
+            
+            var store3 = (await adminClient.CreateStore(new CreateStoreRequest { Name = "test3" })).Id;
+            Assert.Empty(await adminClient.GetStoreLightningAddresses(store3));
+            var metadata = JObject.FromObject(new { test = 123 });
+            await adminClient.AddOrUpdateStoreLightningAddress(store3, address3, new LightningAddressData
+            {
+                InvoiceMetadata = metadata
+            });
+            var lnAddresses = await adminClient.GetStoreLightningAddresses(store3);
+            Assert.Single(lnAddresses);
+            Assert.Equal(metadata, lnAddresses[0].InvoiceMetadata);
         }
 
         [Fact(Timeout = 60 * 2 * 1000)]

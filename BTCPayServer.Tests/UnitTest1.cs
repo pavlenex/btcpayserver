@@ -2461,7 +2461,7 @@ namespace BTCPayServer.Tests
             var ctrl = acc.GetController<UINotificationsController>();
             var newVersion = MockVersionFetcher.MOCK_NEW_VERSION;
 
-            var vm = Assert.IsType<Models.NotificationViewModels.IndexViewModel>(
+            var vm = Assert.IsType<Models.NotificationViewModels.NotificationIndexViewModel>(
                 Assert.IsType<ViewResult>(await ctrl.Index()).Model);
 
             Assert.True(vm.Skip == 0);
@@ -2919,7 +2919,7 @@ namespace BTCPayServer.Tests
                 Password = "store@store.com",
                 Port = 1234,
                 Server = "store.com"
-            }), "", true));
+            }), ""));
 
             Assert.Equal("store@store.com", (await Assert.IsType<StoreEmailSender>(await emailSenderFactory.GetEmailSender(acc.StoreId)).GetEmailSettings()).Login);
         }
