@@ -161,10 +161,14 @@ namespace BTCPayServer.Tests
             {
                 errors.Remove(validationError);
             }
-            valid = !errors.Any();
-
+            if (errors.Any())
+            {
+                foreach (ValidationError error in errors)
+                {
+                    TestLogs.LogInformation($"Error Type: {error.ErrorType} - {error.Path}: {error.Message} - Value: {error.Value}");
+                } 
+            }
             Assert.Empty(errors);
-            Assert.True(valid);
         }
 
         [Fact]
@@ -2874,9 +2878,7 @@ namespace BTCPayServer.Tests
         {
             var settings = tester.PayTester.GetService<SettingsRepository>();
             await settings.UpdateSetting<MigrationSettings>(new MigrationSettings());
-            var migrationStartupTask = tester.PayTester.GetService<IServiceProvider>().GetServices<IStartupTask>()
-                .Single(task => task is MigrationStartupTask);
-            await migrationStartupTask.ExecuteAsync();
+            await tester.PayTester.RestartStartupTask<MigrationStartupTask>();
         }
 
         [Fact(Timeout = LongRunningTestTimeout)]

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
-using System.Net.Http;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,7 +13,6 @@ using BTCPayServer.Events;
 using BTCPayServer.Lightning;
 using BTCPayServer.Models.InvoicingModels;
 using BTCPayServer.NTag424;
-using BTCPayServer.Payments;
 using BTCPayServer.Payments.Lightning;
 using BTCPayServer.PayoutProcessors;
 using BTCPayServer.Services;
@@ -30,7 +29,6 @@ using Newtonsoft.Json.Linq;
 using Xunit;
 using Xunit.Abstractions;
 using Xunit.Sdk;
-using static Org.BouncyCastle.Math.EC.ECCurve;
 using CreateApplicationUserRequest = BTCPayServer.Client.Models.CreateApplicationUserRequest;
 
 namespace BTCPayServer.Tests
@@ -239,6 +237,76 @@ namespace BTCPayServer.Tests
             // if user is a guest or owner, then it should be ok
             await unrestricted.AddStoreUser(store.Id, new StoreUserData() { UserId = newUser.Id });
             await newUserClient.GetInvoices(store.Id);
+        }
+
+        [Fact(Timeout = TestTimeout)]
+        [Trait("Integration", "Integration")]
+        public async Task CanCreateReadAndDeleteFiles()
+        {
+            using var tester = CreateServerTester(newDb: true);
+            await tester.StartAsync();
+            var user = tester.NewAccount();
+            await user.GrantAccessAsync();
+            await user.MakeAdmin();
+            var client = await user.CreateClient();
+
+            // List
+            Assert.Empty(await client.GetFiles());
+
+            // Upload
+            var filePath = TestUtils.GetTestDataFullPath("OldInvoices.csv");
+            var upload = await client.UploadFile(filePath, "text/csv");
+            Assert.Equal("OldInvoices.csv", upload.OriginalName);
+            Assert.NotNull(upload.Uri);
+            Assert.NotNull(upload.Url);
+
+            // Re-check list
+            Assert.Single(await client.GetFiles());
+
+            // Single file endpoint
+            var singleFile = await client.GetFile(upload.Id);
+            Assert.Equal("OldInvoices.csv", singleFile.OriginalName);
+            Assert.NotNull(singleFile.Uri);
+            Assert.NotNull(singleFile.Url);
+
+            // Delete
+            await client.DeleteFile(upload.Id);
+            Assert.Empty(await client.GetFiles());
+            
+            // Profile image
+            await AssertValidationError(["file"],
+                async () => await client.UploadCurrentUserProfilePicture(filePath, "text/csv")
+            );
+            
+            var profilePath = TestUtils.GetTestDataFullPath("logo.png");
+            var currentUser = await client.UploadCurrentUserProfilePicture(profilePath, "image/png");
+            var files = await client.GetFiles();
+            Assert.Single(files);
+            Assert.Equal("logo.png", files[0].OriginalName);
+            Assert.Equal(files[0].Url, currentUser.ImageUrl);
+            
+            await client.DeleteCurrentUserProfilePicture();
+            Assert.Empty(await client.GetFiles());
+            currentUser = await client.GetCurrentUser();
+            Assert.Null(currentUser.ImageUrl);
+            
+            // Store logo
+            var store = await client.CreateStore(new CreateStoreRequest { Name = "mystore" });
+            await AssertValidationError(["file"],
+                async () => await client.UploadStoreLogo(store.Id, filePath, "text/csv")
+            );
+            
+            var logoPath = TestUtils.GetTestDataFullPath("logo.png");
+            var storeData = await client.UploadStoreLogo(store.Id, logoPath, "image/png");
+            files = await client.GetFiles();
+            Assert.Single(files);
+            Assert.Equal("logo.png", files[0].OriginalName);
+            Assert.Equal(files[0].Url, storeData.LogoUrl);
+            
+            await client.DeleteStoreLogo(store.Id);
+            Assert.Empty(await client.GetFiles());
+            storeData = await client.GetStore(store.Id);
+            Assert.Null(storeData.LogoUrl);
         }
 
         [Fact(Timeout = TestTimeout)]
@@ -2915,14 +2983,18 @@ namespace BTCPayServer.Tests
             await tester.PayTester.GetService<NotificationSender>()
                 .SendNotification(new UserScope(user.UserId), new NewVersionNotification());
 
-            Assert.Single(await viewOnlyClient.GetNotifications());
+            var notifications = (await viewOnlyClient.GetNotifications()).ToList();
+            Assert.Single(notifications);
             Assert.Single(await viewOnlyClient.GetNotifications(false));
             Assert.Empty(await viewOnlyClient.GetNotifications(true));
+
+            var notification = notifications.First();
+            Assert.Null(notification.StoreId);
 
             Assert.Single(await client.GetNotifications());
             Assert.Single(await client.GetNotifications(false));
             Assert.Empty(await client.GetNotifications(true));
-            var notification = (await client.GetNotifications()).First();
+            notification = (await client.GetNotifications()).First();
             notification = await client.GetNotification(notification.Id);
             Assert.False(notification.Seen);
             await AssertHttpError(403, async () =>
@@ -2939,6 +3011,41 @@ namespace BTCPayServer.Tests
             await client.RemoveNotification(notification.Id);
             Assert.Empty(await viewOnlyClient.GetNotifications(true));
             Assert.Empty(await viewOnlyClient.GetNotifications(false));
+            
+            // Store association
+            var unrestricted = await user.CreateClient(Policies.Unrestricted);
+            var store1 = await unrestricted.CreateStore(new CreateStoreRequest { Name = "Store A" });
+            await tester.PayTester.GetService<NotificationSender>()
+                .SendNotification(new UserScope(user.UserId), new InviteAcceptedNotification{
+                    UserId = user.UserId,
+                    UserEmail = user.Email,
+                    StoreId = store1.Id,
+                    StoreName = store1.Name
+                });
+            notifications = (await client.GetNotifications()).ToList();
+            Assert.Single(notifications);
+
+            notification = notifications.First();
+            Assert.Equal(store1.Id, notification.StoreId);
+            Assert.Equal($"User {user.Email} accepted the invite to {store1.Name}.", notification.Body);
+            
+            var store2 = await unrestricted.CreateStore(new CreateStoreRequest { Name = "Store B" });
+            await tester.PayTester.GetService<NotificationSender>()
+                .SendNotification(new UserScope(user.UserId), new InviteAcceptedNotification{
+                    UserId = user.UserId,
+                    UserEmail = user.Email,
+                    StoreId = store2.Id,
+                    StoreName = store2.Name
+                });
+            notifications = (await client.GetNotifications(storeId: [store2.Id])).ToList();
+            Assert.Single(notifications);
+
+            notification = notifications.First();
+            Assert.Equal(store2.Id, notification.StoreId);
+            Assert.Equal($"User {user.Email} accepted the invite to {store2.Name}.", notification.Body);
+
+            Assert.Equal(2, (await client.GetNotifications(storeId: [store1.Id, store2.Id])).Count());
+            Assert.Equal(2, (await client.GetNotifications()).Count());
             
             // Settings
             var settings = await client.GetNotificationSettings();
