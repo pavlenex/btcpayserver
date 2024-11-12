@@ -20,6 +20,7 @@ using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Hosting;
 using BTCPayServer.JsonConverters;
+using BTCPayServer.Lightning;
 using BTCPayServer.Logging;
 using BTCPayServer.Payments;
 using BTCPayServer.Payments.Bitcoin;
@@ -39,6 +40,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NBitcoin;
 using NBitcoin.DataEncoders;
@@ -250,12 +252,10 @@ namespace BTCPayServer.Tests
             Assert.Equal(id, id1);
             Assert.Equal(id, id2);
             Assert.Equal("LTC-LN", id.ToString());
-#if ALTCOINS
             id = PaymentMethodId.Parse("XMR");
             id1 = PaymentMethodId.Parse("XMR-MoneroLike");
             Assert.Equal(id, id1);
             Assert.Equal("XMR-CHAIN", id.ToString());
-#endif
         }
 
         [Fact]
@@ -487,7 +487,7 @@ namespace BTCPayServer.Tests
 
 #pragma warning restore CS0618
         }
-#if ALTCOINS
+
         [Fact]
         public void CanCalculateCryptoDue()
         {
@@ -507,7 +507,6 @@ namespace BTCPayServer.Tests
 
             var paymentMethod = entity.GetPaymentPrompts().TryGet(PaymentTypes.CHAIN.GetPaymentMethodId("BTC"));
             var accounting = paymentMethod.Calculate();
-            Assert.Equal(1.0m, accounting.ToSmallestUnit(Money.Satoshis(1.0m).ToDecimal(MoneyUnit.BTC)));
             Assert.Equal(1.1m, accounting.Due);
             Assert.Equal(1.1m, accounting.TotalDue);
 
@@ -658,7 +657,6 @@ namespace BTCPayServer.Tests
             Assert.Equal(accounting.Paid, accounting.TotalDue);
 #pragma warning restore CS0618
         }
-#endif
 
         [Fact]
         public void DeterministicUTXOSorter()
@@ -682,9 +680,28 @@ namespace BTCPayServer.Tests
         }
 
         [Fact]
+        public void ResourceTrackerTest()
+        {
+            var tracker = new ResourceTracker<string>();
+            var t1 = tracker.StartTracking();
+            Assert.True(t1.TryTrack("1"));
+            Assert.False(t1.TryTrack("1"));
+            var t2 = tracker.StartTracking();
+            Assert.True(t2.TryTrack("2"));
+            Assert.False(t2.TryTrack("1"));
+            Assert.True(t1.Contains("1"));
+            Assert.True(t2.Contains("2"));
+            Assert.True(tracker.Contains("1"));
+            Assert.True(tracker.Contains("2"));
+            t1.Dispose();
+            Assert.False(tracker.Contains("1"));
+            Assert.True(tracker.Contains("2"));
+            Assert.True(t2.TryTrack("1"));
+        }
+
+        [Fact]
         public void CanAcceptInvoiceWithTolerance()
         {
-            var networkProvider = CreateNetworkProvider(ChainName.Regtest);
             var entity = new InvoiceEntity() { Currency = "USD" };
 #pragma warning disable CS0618
             entity.Payments = new List<PaymentEntity>();
@@ -741,10 +758,29 @@ namespace BTCPayServer.Tests
             Assert.True(FileTypeDetector.IsAudio(new byte[] { 0xFF, 0xF3, 0xE4, 0x64, 0x00, 0x20, 0xAD, 0xBD, 0x04, 0x00 }, "music.mp3"));
         }
 
+        CurrencyNameTable GetCurrencyNameTable()
+        {
+            ServiceCollection services = new ServiceCollection();
+            services.AddLogging(o => o.AddProvider(this.TestLogProvider));
+            BTCPayServerServices.RegisterCurrencyData(services);
+            // One test fail without.
+            services.AddCurrencyData(new CurrencyData()
+            {
+                Code = "USDt",
+                Name = "USDt",
+                Divisibility = 8,
+                Symbol = null,
+                Crypto = true
+            });
+            var table = services.BuildServiceProvider().GetRequiredService<CurrencyNameTable>();
+            table.ReloadCurrencyData(default).GetAwaiter().GetResult();
+            return table;
+        }
+
         [Fact]
         public void RoundupCurrenciesCorrectly()
         {
-            DisplayFormatter displayFormatter = new(CurrencyNameTable.Instance);
+            DisplayFormatter displayFormatter = new(GetCurrencyNameTable());
             foreach (var test in new[]
             {
                 (0.0005m, "0.0005 USD", "USD"), (0.001m, "0.001 USD", "USD"), (0.01m, "0.01 USD", "USD"),
@@ -757,8 +793,8 @@ namespace BTCPayServer.Tests
                 actual = actual.Replace("￥", "¥"); // Hack so JPY test pass on linux as well
                 Assert.Equal(test.Item2, actual);
             }
-            Assert.Equal(0, CurrencyNameTable.Instance.GetNumberFormatInfo("ARS").CurrencyDecimalDigits);
-            Assert.Equal(0, CurrencyNameTable.Instance.GetNumberFormatInfo("COP").CurrencyDecimalDigits);
+            Assert.Equal(0, GetCurrencyNameTable().GetNumberFormatInfo("ARS").CurrencyDecimalDigits);
+            Assert.Equal(0, GetCurrencyNameTable().GetNumberFormatInfo("COP").CurrencyDecimalDigits);
         }
 
         [Fact]
@@ -832,6 +868,13 @@ namespace BTCPayServer.Tests
             Assert.IsType<MultisigDerivationStrategy>(((P2WSHDerivationStrategy)strategyBase).Inner);
             Assert.Equal(expected, strategyBase.ToString());
 
+            foreach (var space in new[] { "\r\n", " ", "\t" })
+            {
+                var expectedWithNewLines = $"2-of-tpubDDXgATYzdQkHHhZZCMcNJj8BGDENvzMVou5v9NdxiP4rxDLj33nS233dGFW4htpVZSJ6zds9eVqAV9RyRHHiKtwQKX8eR4n4KN3Dwmj7A3h-{space}tpubDC8a54NFtQtMQAZ97VhoU9V6jVTvi9w4Y5SaAXJSBYETKg3AoX5CCKndznhPWxJUBToPCpT44s86QbKdGpKAnSjcMTGW4kE6UQ8vpBjcybW-tpubDChjnP9LXNrJp43biqjY7FH93wgRRNrNxB4Q8pH7PPRy8UPcH2S6V46WGVJ47zVGF7SyBJNCpnaogsFbsybVQckGtVhCkng3EtFn8qmxptS";
+                strategyBase = parser.Parse(expectedWithNewLines);
+                Assert.Equal(expected, strategyBase.ToString());
+            }
+
             var inner = (MultisigDerivationStrategy)((P2WSHDerivationStrategy)strategyBase).Inner;
             Assert.False(inner.IsLegacy);
             Assert.Equal(3, inner.Keys.Count);
@@ -848,7 +891,7 @@ namespace BTCPayServer.Tests
             Assert.True(((DirectDerivationStrategy)strategyBase).Segwit);
 
             // Failure cases
-            Assert.Throws<FormatException>(() => { parser.Parse("xpub 661MyMwAqRbcGVBsTGeNZN6QGVHmMHLdSA4FteGsRrEriu4pnVZMZWnruFFFXkMnyoBjyHndD3Qwcfz4MPzBUxjSevweNFQx7SAYZATtcDw"); }); // invalid format because of space
+            Assert.Throws<FormatException>(() => { parser.Parse("xpubZ661MyMwAqRbcGVBsTGeNZN6QGVHmMHLdSA4FteGsRrEriu4pnVZMZWnruFFFXkMnyoBjyHndD3Qwcfz4MPzBUxjSevweNFQx7SAYZATtcDw"); });
             Assert.Throws<ParsingException>(() => { parser.ParseOutputDescriptor("invalid"); }); // invalid in general
             Assert.Throws<ParsingException>(() => { parser.ParseOutputDescriptor("wpkh([8b60afd1/49h/0h/0h]xpub661MyMwAFXkMnyoBjyHndD3QwRbcGVBsTGeNZN6QGVHcfz4MPzBUxjSevweNFQx7SqmMHLdSA4FteGsRrEriu4pnVZMZWnruFFAYZATtcDw/0/*)#9x4vkw48"); }); // invalid checksum
         }
@@ -1380,7 +1423,7 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             var btcPayNetworkProvider = CreateNetworkProvider(ChainName.Regtest);
             foreach (var network in btcPayNetworkProvider.GetAll())
             {
-                var cd = CurrencyNameTable.Instance.GetCurrencyData(network.CryptoCode, false);
+                var cd = GetCurrencyNameTable().GetCurrencyData(network.CryptoCode, false);
                 Assert.NotNull(cd);
                 Assert.Equal(network.Divisibility, cd.Divisibility);
                 Assert.True(cd.Crypto);
@@ -1448,8 +1491,8 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             Assert.True(CurrencyValue.TryParse("1usd", out result));
             Assert.Equal("1 USD", result.ToString());
             Assert.True(CurrencyValue.TryParse("1.501 usd", out result));
-            Assert.Equal("1.50 USD", result.ToString());
-            Assert.False(CurrencyValue.TryParse("1.501 WTFF", out result));
+            Assert.Equal("1.501 USD", result.ToString());
+            Assert.True(CurrencyValue.TryParse("1.501 WTFF", out result));
             Assert.False(CurrencyValue.TryParse("1,501 usd", out result));
             Assert.False(CurrencyValue.TryParse("1.501", out result));
         }
@@ -2249,7 +2292,7 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
                     Data.InvoiceData data = new Data.InvoiceData();
                     obj = data;
                     data.Blob2 = v.Input.ToString();
-                    data.Migrate();
+                    data.TryMigrate();
                     var actual = JObject.Parse(data.Blob2);
                     AssertSameJson(v.Expected, actual);
                     if (!v.SkipRountripTest)
@@ -2269,7 +2312,7 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
                     //data.
                     obj = data;
                     data.Blob2 = v.Input.ToString();
-                    data.Migrate();
+                    data.TryMigrate();
                     var actual = JObject.Parse(data.Blob2);
                     AssertSameJson(v.Expected, actual);
                     if (!v.SkipRountripTest)
@@ -2384,7 +2427,7 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
                 });
                 var data = new Data.InvoiceData();
                 data.Blob2 = o.ToString();
-                data.Migrate();
+                data.TryMigrate();
                 var migrated = JObject.Parse(data.Blob2);
                 return migrated["prompts"]["BTC-CHAIN"]["details"]["accountDerivation"].Value<string>();
             })

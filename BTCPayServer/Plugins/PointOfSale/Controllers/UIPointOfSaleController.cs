@@ -30,6 +30,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Localization;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using NBitpayClient;
@@ -51,6 +52,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
             InvoiceRepository invoiceRepository,
             UIInvoiceController invoiceController,
             FormDataService formDataService,
+            IStringLocalizer stringLocalizer,
             DisplayFormatter displayFormatter)
         {
             _currencies = currencies;
@@ -60,6 +62,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
             _invoiceRepository = invoiceRepository;
             _invoiceController = invoiceController;
             _displayFormatter = displayFormatter;
+            StringLocalizer = stringLocalizer;
             FormDataService = formDataService;
         }
 
@@ -71,6 +74,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
         private readonly UIInvoiceController _invoiceController;
         private readonly DisplayFormatter _displayFormatter;
         public FormDataService FormDataService { get; }
+        public IStringLocalizer StringLocalizer { get; }
 
         [HttpGet("/")]
         [HttpGet("/apps/{appId}/pos")]
@@ -172,9 +176,9 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
             string title;
             decimal? price;
             Dictionary<string, InvoiceSupportedTransactionCurrency> paymentMethods = null;
-            ViewPointOfSaleViewModel.Item choice = null;
+            AppItem choice = null;
             List<PosCartItem> cartItems = null;
-            ViewPointOfSaleViewModel.Item[] choices = null;
+            AppItem[] choices = null;
             if (!string.IsNullOrEmpty(choiceKey))
             {
                 choices = AppService.Parse(settings.Template, false);
@@ -182,7 +186,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
                 if (choice == null)
                     return NotFound();
                 title = choice.Title;
-                if (choice.PriceType == ViewPointOfSaleViewModel.ItemPriceType.Topup)
+                if (choice.PriceType == AppItemPriceType.Topup)
                 {
                     price = null;
                 }
@@ -196,12 +200,6 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
                 if (choice.Inventory is <= 0)
                 {
                     return RedirectToAction(nameof(ViewPointOfSale), new { appId });
-                }
-
-                if (choice?.PaymentMethods?.Any() is true)
-                {
-                    paymentMethods = choice?.PaymentMethods.ToDictionary(s => s,
-                        s => new InvoiceSupportedTransactionCurrency() { Enabled = true });
                 }
             }
             else
@@ -235,7 +233,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
                             }
                         }
 
-                        var expectedCartItemPrice = itemChoice.PriceType != ViewPointOfSaleViewModel.ItemPriceType.Topup
+                        var expectedCartItemPrice = itemChoice.PriceType != AppItemPriceType.Topup
                             ? itemChoice.Price ?? 0
                             : 0;
                         
@@ -369,7 +367,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
                                     var singlePrice = _displayFormatter.Currency(cartItem.Price, settings.Currency, DisplayFormatter.CurrencyFormat.Symbol);
                                     var totalPrice = _displayFormatter.Currency(cartItem.Price * cartItem.Count, settings.Currency, DisplayFormatter.CurrencyFormat.Symbol);
                                     var ident = selectedChoice.Title ?? selectedChoice.Id;
-                                    var key = selectedChoice.PriceType == ViewPointOfSaleViewModel.ItemPriceType.Fixed ? ident : $"{ident} ({singlePrice})";
+                                    var key = selectedChoice.PriceType == AppItemPriceType.Fixed ? ident : $"{ident} ({singlePrice})";
                                     cartData.Add(key, $"{cartItem.Count} x {singlePrice} = {totalPrice}");
                                 }
 
@@ -377,7 +375,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
                                 {
                                     for (var i = 0; i < amountsArray.Count; i++)
                                     {
-                                        cartData.Add($"Manual entry {i+1}", _displayFormatter.Currency(amountsArray[i].ToObject<decimal>(), settings.Currency, DisplayFormatter.CurrencyFormat.Symbol));
+                                        cartData.Add($"Custom Amount {i+1}", _displayFormatter.Currency(amountsArray[i].ToObject<decimal>(), settings.Currency, DisplayFormatter.CurrencyFormat.Symbol));
                                     }
                                 }
                                 receiptData.Add("Cart", cartData);
@@ -627,6 +625,8 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
             }
 
             vm.ExampleCallback = "{\n  \"id\":\"SkdsDghkdP3D3qkj7bLq3\",\n  \"url\":\"https://btcpay.example.com/invoice?id=SkdsDghkdP3D3qkj7bLq3\",\n  \"status\":\"paid\",\n  \"price\":10,\n  \"currency\":\"EUR\",\n  \"invoiceTime\":1520373130312,\n  \"expirationTime\":1520374030312,\n  \"currentTime\":1520373179327,\n  \"exceptionStatus\":false,\n  \"buyerFields\":{\n    \"buyerEmail\":\"customer@example.com\",\n    \"buyerNotify\":false\n  },\n  \"paymentSubtotals\": {\n    \"BTC\":114700\n  },\n  \"paymentTotals\": {\n    \"BTC\":118400\n  },\n  \"transactionCurrency\": \"BTC\",\n  \"amountPaid\": \"1025900\",\n  \"exchangeRates\": {\n    \"BTC\": {\n      \"EUR\": 8721.690715789999,\n      \"USD\": 10817.99\n    }\n  }\n}";
+            
+            await FillUsers(vm);
             return View("PointOfSale/UpdatePointOfSale", vm);
         }
 
@@ -647,14 +647,15 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
                 ModelState.AddModelError(nameof(vm.Currency), "Invalid currency");
             try
             {
-                vm.Template = AppService.SerializeTemplate(AppService.Parse(vm.Template));
+                vm.Template = AppService.SerializeTemplate(AppService.Parse(vm.Template, true, true));
             }
-            catch
+            catch (Exception ex)
             {
-                ModelState.AddModelError(nameof(vm.Template), "Invalid template");
+                ModelState.AddModelError(nameof(vm.Template), $"Invalid template: {ex.Message}");
             }
             if (!ModelState.IsValid)
             {
+                await FillUsers(vm);
                 return View("PointOfSale/UpdatePointOfSale", vm);
             }
 
@@ -685,7 +686,7 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
             app.Archived = vm.Archived;
             app.SetSettings(settings);
             await _appService.UpdateOrCreateApp(app);
-            TempData[WellKnownTempData.SuccessMessage] = "App updated";
+            TempData[WellKnownTempData.SuccessMessage] = StringLocalizer["App updated"].Value;
             return RedirectToAction(nameof(UpdatePointOfSale), new { appId });
         }
 
@@ -715,5 +716,11 @@ namespace BTCPayServer.Plugins.PointOfSale.Controllers
         private StoreData GetCurrentStore() => HttpContext.GetStoreData();
 
         private AppData GetCurrentApp() => HttpContext.GetAppData();
+
+        private async Task FillUsers(UpdatePointOfSaleViewModel vm)
+        {
+            var users = await _storeRepository.GetStoreUsers(GetCurrentStore().Id);
+            vm.StoreUsers = users.Select(u => (u.Id, u.Email, u.StoreRole.Role)).ToDictionary(u => u.Id, u => $"{u.Email} ({u.Role})");
+        }
     }
 }

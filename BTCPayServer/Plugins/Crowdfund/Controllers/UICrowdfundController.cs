@@ -4,8 +4,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
+using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Abstractions.Form;
+using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
@@ -15,7 +17,6 @@ using BTCPayServer.Forms;
 using BTCPayServer.Forms.Models;
 using BTCPayServer.Models;
 using BTCPayServer.Plugins.Crowdfund.Models;
-using BTCPayServer.Plugins.PointOfSale.Models;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Invoices;
@@ -25,6 +26,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Localization;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using NBitpayClient;
@@ -44,23 +46,28 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
             EventAggregator eventAggregator,
             UriResolver uriResolver,
             StoreRepository storeRepository,
+            IFileService fileService,
             UIInvoiceController invoiceController,
             UserManager<ApplicationUser> userManager,
             FormDataService formDataService,
+            IStringLocalizer stringLocalizer,
             CrowdfundAppType app)
         {
             _currencies = currencies;
             _appService = appService;
             _userManager = userManager;
             _app = app;
+            _fileService = fileService;
             _storeRepository = storeRepository;
             _eventAggregator = eventAggregator;
             _uriResolver = uriResolver;
             _invoiceController = invoiceController;
             FormDataService = formDataService;
+            StringLocalizer = stringLocalizer;
         }
 
         private readonly EventAggregator _eventAggregator;
+        private readonly IFileService _fileService;
         private readonly UriResolver _uriResolver;
         private readonly CurrencyNameTable _currencies;
         private readonly StoreRepository _storeRepository;
@@ -69,6 +76,7 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly CrowdfundAppType _app;
         public FormDataService FormDataService { get; }
+        public IStringLocalizer StringLocalizer { get; }
 
         [HttpGet("/")]
         [HttpGet("/apps/{appId}/crowdfund")]
@@ -140,36 +148,28 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
             decimal? price = request.Amount;
             var title = settings.Title;
             Dictionary<string, InvoiceSupportedTransactionCurrency> paymentMethods = null;
-            ViewPointOfSaleViewModel.Item choice = null;
             if (!string.IsNullOrEmpty(request.ChoiceKey))
             {
                 var choices = AppService.Parse(settings.PerksTemplate, false);
-                choice = choices?.FirstOrDefault(c => c.Id == request.ChoiceKey);
+                AppItem choice = choices.FirstOrDefault(c => c.Id == request.ChoiceKey);
                 if (choice == null)
                     return NotFound("Incorrect option provided");
                 title = choice.Title;
 
-                if (choice.PriceType == ViewPointOfSaleViewModel.ItemPriceType.Topup)
+                if (choice.PriceType == AppItemPriceType.Topup)
                 {
                     price = null;
                 }
                 else
                 {
-                    price = choice.Price.Value;
+                    if (choice.Price.HasValue)
+                        price = choice.Price.Value;
                     if (request.Amount > price)
                         price = request.Amount;
                 }
-                if (choice.Inventory.HasValue)
+                if (choice.Inventory is <= 0)
                 {
-                    if (choice.Inventory <= 0)
-                    {
-                        return NotFound("Option was out of stock");
-                    }
-                }
-                if (choice?.PaymentMethods?.Any() is true)
-                {
-                    paymentMethods = choice?.PaymentMethods.ToDictionary(s => s,
-                        s => new InvoiceSupportedTransactionCurrency() { Enabled = true });
+                    return NotFound("Option was out of stock");
                 }
             }
             else
@@ -221,8 +221,6 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
                     }
                 }
             }
-
-            
 
             if (!isAdmin && (settings.EnforceTargetAmount && info.TargetAmount.HasValue && price >
                              (info.TargetAmount - (info.Info.CurrentAmount + info.Info.CurrentPendingAmount))))
@@ -393,6 +391,7 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
 
             var settings = app.GetSettings<CrowdfundSettings>();
             var resetEvery = Enum.GetName(typeof(CrowdfundResetEvery), settings.ResetEvery);
+
             var vm = new UpdateCrowdfundViewModel
             {
                 Title = settings.Title,
@@ -405,8 +404,8 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
                 EnforceTargetAmount = settings.EnforceTargetAmount,
                 StartDate = settings.StartDate,
                 TargetCurrency = settings.TargetCurrency,
+                MainImageUrl = settings.MainImageUrl == null ? null : await _uriResolver.Resolve(Request.GetAbsoluteRootUri(), settings.MainImageUrl),
                 Description = settings.Description,
-                MainImageUrl = settings.MainImageUrl,
                 EndDate = settings.EndDate,
                 TargetAmount = settings.TargetAmount,
                 NotificationUrl = settings.NotificationUrl,
@@ -434,8 +433,13 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
 
         [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
         [HttpPost("{appId}/settings/crowdfund")]
-        public async Task<IActionResult> UpdateCrowdfund(string appId, UpdateCrowdfundViewModel vm, string command)
+        public async Task<IActionResult> UpdateCrowdfund(string appId, UpdateCrowdfundViewModel vm,
+            [FromForm] bool RemoveLogoFile = false)
         {
+            var userId = GetUserId();
+            if (userId is null)
+                return NotFound();
+
             var app = GetCurrentApp();
             if (app == null)
                 return NotFound();
@@ -447,11 +451,11 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
 
             try
             {
-                vm.PerksTemplate = AppService.SerializeTemplate(AppService.Parse(vm.PerksTemplate));
+                vm.PerksTemplate = AppService.SerializeTemplate(AppService.Parse(vm.PerksTemplate, true, true));
             }
-            catch
+            catch (Exception ex)
             {
-                ModelState.AddModelError(nameof(vm.PerksTemplate), "Invalid template");
+                ModelState.AddModelError(nameof(vm.PerksTemplate), $"Invalid template: {ex.Message}");
             }
             if (vm.TargetAmount is decimal v && v == 0.0m)
             {
@@ -503,6 +507,16 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
                 parsedAnimationColors = new CrowdfundSettings().AnimationColors;
             }
 
+            UploadImageResultModel imageUpload = null;
+            if (vm.MainImageFile != null)
+            {
+                imageUpload = await _fileService.UploadImage(vm.MainImageFile, userId);
+                if (!imageUpload.Success)
+                {
+                    ModelState.AddModelError(nameof(vm.MainImageFile), imageUpload.Response);
+                }
+            }
+
             if (!ModelState.IsValid)
             {
                 return View("Crowdfund/UpdateCrowdfund", vm);
@@ -520,7 +534,7 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
                 Description = vm.Description,
                 EndDate = vm.EndDate?.ToUniversalTime(),
                 TargetAmount = vm.TargetAmount,
-                MainImageUrl = vm.MainImageUrl,
+                MainImageUrl = app.GetSettings<CrowdfundSettings>()?.MainImageUrl,
                 NotificationUrl = vm.NotificationUrl,
                 Tagline = vm.Tagline,
                 PerksTemplate = vm.PerksTemplate,
@@ -538,6 +552,17 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
                 FormId = vm.FormId
             };
 
+            if (imageUpload?.Success is true)
+            {
+                newSettings.MainImageUrl = new UnresolvedUri.FileIdUri(imageUpload.StoredFile.Id);
+            }
+            else if (RemoveLogoFile)
+            {
+                newSettings.MainImageUrl = null;
+                vm.MainImageUrl = null;
+                vm.MainImageFile = null;
+            }
+
             app.TagAllInvoices = vm.UseAllStoreInvoices;
             app.SetSettings(newSettings);
 
@@ -549,7 +574,7 @@ namespace BTCPayServer.Plugins.Crowdfund.Controllers
                 StoreId = app.StoreDataId,
                 Settings = newSettings
             });
-            TempData[WellKnownTempData.SuccessMessage] = "App updated";
+            TempData[WellKnownTempData.SuccessMessage] = StringLocalizer["App updated"].Value;
             return RedirectToAction(nameof(UpdateCrowdfund), new { appId });
         }
 

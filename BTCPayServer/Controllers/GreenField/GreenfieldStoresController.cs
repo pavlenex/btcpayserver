@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
+using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
@@ -27,17 +28,20 @@ namespace BTCPayServer.Controllers.Greenfield
     public class GreenfieldStoresController : ControllerBase
     {
         private readonly StoreRepository _storeRepository;
+        private readonly CurrencyNameTable _currencyNameTable;
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IFileService _fileService;
         private readonly UriResolver _uriResolver;
 
         public GreenfieldStoresController(
             StoreRepository storeRepository,
+            CurrencyNameTable currencyNameTable,
             UserManager<ApplicationUser> userManager,
             IFileService fileService,
             UriResolver uriResolver)
         {
             _storeRepository = storeRepository;
+            _currencyNameTable = currencyNameTable;
             _userManager = userManager;
             _fileService = fileService;
             _uriResolver = uriResolver;
@@ -108,30 +112,25 @@ namespace BTCPayServer.Controllers.Greenfield
         [HttpPost("~/api/v1/stores/{storeId}/logo")]
         public async Task<IActionResult> UploadStoreLogo(string storeId, IFormFile file)
         {
+            var user = await _userManager.GetUserAsync(User);
             var store = HttpContext.GetStoreData();
-            if (store == null) return StoreNotFound();
-
+            if (user == null || store == null) return StoreNotFound();
+            
+            UploadImageResultModel upload = null;
             if (file is null)
                 ModelState.AddModelError(nameof(file), "Invalid file");
-            else if (file.Length > 1_000_000)
-                ModelState.AddModelError(nameof(file), "The uploaded image file should be less than 1MB");
-            else if (!file.ContentType.StartsWith("image/", StringComparison.InvariantCulture))
-                ModelState.AddModelError(nameof(file), "The uploaded file needs to be an image");
-            else if (!file.FileName.IsValidFileName())
-                ModelState.AddModelError(nameof(file.FileName), "Invalid filename");
             else
             {
-                var formFile = await file.Bufferize();
-                if (!FileTypeDetector.IsPicture(formFile.Buffer, formFile.FileName))
-                    ModelState.AddModelError(nameof(file), "The uploaded file needs to be an image");
+                upload = await _fileService.UploadImage(file, user.Id);
+                if (!upload.Success)
+                    ModelState.AddModelError(nameof(file), upload.Response);
             }
             if (!ModelState.IsValid)
                 return this.CreateValidationError(ModelState);
-
+            
             try
             {
-                var userId = _userManager.GetUserId(User)!;
-                var storedFile = await _fileService.AddFile(file!, userId);
+                var storedFile = upload!.StoredFile!;
                 var blob = store.GetStoreBlob();
                 blob.LogoUrl = new UnresolvedUri.FileIdUri(storedFile.Id);
                 store.SetStoreBlob(blob);
@@ -175,6 +174,7 @@ namespace BTCPayServer.Controllers.Greenfield
                 Website = data.StoreWebsite,
                 Archived = data.Archived,
                 BrandColor = storeBlob.BrandColor,
+                ApplyBrandColorToBackend = storeBlob.ApplyBrandColorToBackend,
                 CssUrl = storeBlob.CssUrl == null ? null : await _uriResolver.Resolve(Request.GetAbsoluteRootUri(), storeBlob.CssUrl),
                 LogoUrl = storeBlob.LogoUrl == null ? null : await _uriResolver.Resolve(Request.GetAbsoluteRootUri(), storeBlob.LogoUrl),
                 PaymentSoundUrl = storeBlob.PaymentSoundUrl == null ? null : await _uriResolver.Resolve(Request.GetAbsoluteRootUri(), storeBlob.PaymentSoundUrl),
@@ -215,7 +215,7 @@ namespace BTCPayServer.Controllers.Greenfield
                     Above = criteria.Above,
                     Amount = criteria.Value.Value,
                     CurrencyCode = criteria.Value.Currency,
-                    PaymentMethod = criteria.PaymentMethod.ToString()
+                    PaymentMethodId = criteria.PaymentMethod.ToString()
                 }).ToList() ?? new List<PaymentMethodCriteriaData>()
             };
         }
@@ -255,6 +255,7 @@ namespace BTCPayServer.Controllers.Greenfield
             blob.PaymentTolerance = restModel.PaymentTolerance;
             blob.PayJoinEnabled = restModel.PayJoinEnabled;
             blob.BrandColor = restModel.BrandColor;
+            blob.ApplyBrandColorToBackend = restModel.ApplyBrandColorToBackend;
             blob.LogoUrl = restModel.LogoUrl is null ? null : UnresolvedUri.Create(restModel.LogoUrl);
             blob.CssUrl = restModel.CssUrl is null ? null : UnresolvedUri.Create(restModel.CssUrl);
             blob.PaymentSoundUrl = restModel.PaymentSoundUrl is null ? null : UnresolvedUri.Create(restModel.PaymentSoundUrl);
@@ -277,7 +278,7 @@ namespace BTCPayServer.Controllers.Greenfield
                         Currency = criteria.CurrencyCode,
                         Value = criteria.Amount
                     },
-                    PaymentMethod = PaymentMethodId.Parse(criteria.PaymentMethod)
+                    PaymentMethod = PaymentMethodId.Parse(criteria.PaymentMethodId)
                 }).ToList() ?? new List<PaymentMethodCriteria>();
             model.SetStoreBlob(blob);
         }
@@ -333,14 +334,14 @@ namespace BTCPayServer.Controllers.Greenfield
                     {
                         request.AddModelError(data => data.PaymentMethodCriteria[index].CurrencyCode, "CurrencyCode is required", this);
                     }
-                    else if (CurrencyNameTable.Instance.GetCurrencyData(pmc.CurrencyCode, false) is null)
+                    else if (_currencyNameTable.GetCurrencyData(pmc.CurrencyCode, false) is null)
                     {
                         request.AddModelError(data => data.PaymentMethodCriteria[index].CurrencyCode, "CurrencyCode is invalid", this);
                     }
 
-                    if (string.IsNullOrEmpty(pmc.PaymentMethod) || PaymentMethodId.TryParse(pmc.PaymentMethod) is null)
+                    if (string.IsNullOrEmpty(pmc.PaymentMethodId) || PaymentMethodId.TryParse(pmc.PaymentMethodId) is null)
                     {
-                        request.AddModelError(data => data.PaymentMethodCriteria[index].PaymentMethod, "Payment method was invalid", this);
+                        request.AddModelError(data => data.PaymentMethodCriteria[index].PaymentMethodId, "Payment method was invalid", this);
                     }
 
                     if (pmc.Amount < 0)

@@ -1,6 +1,5 @@
 using System;
 using System.Globalization;
-using BTCPayServer.Plugins.PointOfSale.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -10,6 +9,9 @@ public class PosAppData
 {
     [JsonProperty(PropertyName = "cart")]
     public PosAppCartItem[] Cart { get; set; }
+
+    [JsonProperty(PropertyName = "amounts")]
+    public decimal[] Amounts { get; set; }
 
     [JsonProperty(PropertyName = "customAmount")]
     public decimal CustomAmount { get; set; }

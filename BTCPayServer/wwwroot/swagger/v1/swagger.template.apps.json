@@ -345,6 +345,206 @@
                 ]
             }
         },
+        "/api/v1/apps/{appId}/image": {
+            "post": {
+                "tags": [
+                    "Apps"
+                ],
+                "summary": "Uploads an image for a app item",
+                "description": "Uploads an image for a app item",
+                "requestBody": {
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "description": "The image",
+                                        "format": "binary"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "operationId": "Apps_UploadAppItemImage",
+                "responses": {
+                    "200": {
+                        "description": "Uploads an image for a app item",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FileData"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "The app could not be found"
+                    }
+                },
+                "security": [
+                    {
+                        "API_Key": [
+                            "btcpay.store.canmodifystoresettings"
+                        ],
+                        "Basic": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/apps/{appId}/image/{fileId}": {
+            "delete": {
+                "tags": [
+                    "Apps"
+                ],
+                "summary": "Deletes the app item image",
+                "description": "Deletes the app item image",
+                "operationId": "App_DeleteAppItemImage",
+                "responses": {
+                    "200": {
+                        "description": "App item image deleted successfully"
+                    },
+                    "404": {
+                        "description": "The app could not be found"
+                    }
+                },
+                "security": [
+                    {
+                        "API_Key": [
+                            "btcpay.store.canmodifystoresettings"
+                        ],
+                        "Basic": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/apps/{appId}/sales": {
+            "get": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "Apps_GetAppSales",
+                "summary": "Get app sales statistics",
+                "description": "Returns sales statistics for the app",
+                "parameters": [
+                    {
+                        "name": "appId",
+                        "in": "path",
+                        "required": true,
+                        "description": "The app ID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "numberOfDays",
+                        "in": "query",
+                        "required": false,
+                        "description": "How many of the last days",
+                        "schema": {
+                            "nullable": true,
+                            "type": "number",
+                            "default": 7
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "App sales statistics",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AppSalesStats"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "App with specified ID was not found"
+                    }
+                },
+                "security": [
+                    {
+                        "API_Key": [
+                            "btcpay.store.canmodifystoresettings"
+                        ],
+                        "Basic": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/apps/{appId}/top-items": {
+            "get": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "Apps_GetAppTopItems",
+                "summary": "Get app top items statistics",
+                "description": "Returns top items statistics for the app",
+                "parameters": [
+                    {
+                        "name": "appId",
+                        "in": "path",
+                        "required": true,
+                        "description": "The app ID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "count",
+                        "in": "query",
+                        "required": false,
+                        "description": "How many of the items",
+                        "schema": {
+                            "nullable": true,
+                            "type": "number",
+                            "default": 5
+                        }
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "description": "Offset for paging",
+                        "schema": {
+                            "nullable": true,
+                            "type": "number",
+                            "default": 0
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "App top items statistics",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/AppItemStats"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "App with specified ID was not found"
+                    }
+                },
+                "security": [
+                    {
+                        "API_Key": [
+                            "btcpay.store.canmodifystoresettings"
+                        ],
+                        "Basic": []
+                    }
+                ]
+            }
+        },
         "/api/v1/stores/{storeId}/apps": {
             "parameters": [
                 {
@@ -623,34 +823,31 @@
                         "type": "object",
                         "properties": {
                             "items": {
-                                "type": "object",
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/AppItem"
+                                },
                                 "description": "JSON object of app items",
                                 "example": [
                                     {
-                                        "description": "Lovely, fresh and tender, Meng Ding Gan Lu ('sweet dew') is grown in the lush Meng Ding Mountains of the southwestern province of Sichuan where it has been cultivated for over a thousand years.",
                                         "id": "green tea",
-                                        "image": "~/img/pos-sample/green-tea.jpg",
-                                        "price": {
-                                            "type": 2,
-                                            "formatted": "$1.00",
-                                            "value": 1.0
-                                        },
                                         "title": "Green Tea",
+                                        "description": "Lovely, fresh and tender, Meng Ding Gan Lu ('sweet dew') is grown in the lush Meng Ding Mountains of the southwestern province of Sichuan where it has been cultivated for over a thousand years.",
+                                        "image": "~/img/pos-sample/green-tea.jpg",
+                                        "price": "1.0",
+                                        "priceType": "Fixed",
                                         "buyButtonText": null,
                                         "inventory": 5,
                                         "paymentMethods": null,
                                         "disabled": false
                                     },
                                     {
-                                        "description": "Tian Jian Tian Jian means 'heavenly tippy tea' in Chinese, and it describes the finest grade of dark tea. Our Tian Jian dark tea is from Hunan province which is famous for making some of the best dark teas available.",
                                         "id": "black tea",
-                                        "image": "~/img/pos-sample/black-tea.jpg",
-                                        "price": {
-                                            "type": 2,
-                                            "formatted": "$1.00",
-                                            "value": 1.0
-                                        },
                                         "title": "Black Tea",
+                                        "description": "Tian Jian Tian Jian means 'heavenly tippy tea' in Chinese, and it describes the finest grade of dark tea. Our Tian Jian dark tea is from Hunan province which is famous for making some of the best dark teas available.",
+                                        "image": "~/img/pos-sample/black-tea.jpg",
+                                        "price": "2.0",
+                                        "priceType": "Fixed",
                                         "buyButtonText": "Test Buy Button Text",
                                         "inventory": null,
                                         "paymentMethods": null,
@@ -887,6 +1084,129 @@
                         }
                     }
                 ]
+            },
+            "AppItem": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "example": "green-tea",
+                        "description": "Unique ID of the item"
+                    },
+                    "title": {
+                        "type": "string",
+                        "example": "Green Tea",
+                        "description": "The display name of the item"
+                    },
+                    "description": {
+                        "type": "string",
+                        "example": "Lovely, fresh and tender.",
+                        "description": "A description text for the item"
+                    },
+                    "image": {
+                        "type": "string",
+                        "example": "http://teashop.com/img/green-tea.jpg",
+                        "description": "An image URL for the item"
+                    },
+                    "price": {
+                        "type": "string",
+                        "format": "decimal",
+                        "nullable": true,
+                        "example": "21.0"
+                    },
+                    "priceType": {
+                        "type": "string",
+                        "x-enumNames": [
+                            "Fixed",
+                            "Topup",
+                            "Minimum"
+                        ],
+                        "enum": [
+                            "Fixed",
+                            "Topup",
+                            "Minimum"
+                        ]
+                    },
+                    "buyButtonText": {
+                        "type": "string",
+                        "example": "Buy me!",
+                        "description": "A custom text for the buy button for the item"
+                    },
+                    "inventory": {
+                        "type": "integer",
+                        "nullable": true,
+                        "example": 21,
+                        "description": "The remaining stock the item"
+                    },
+                    "disabled": {
+                        "type": "boolean",
+                        "description": "If true, the item does not appear in the list by default.",
+                        "default": false
+                    }
+                }
+            },
+            "AppSalesStats": {
+                "type": "object",
+                "properties": {
+                    "salesCount": {
+                        "type": "integer",
+                        "example": 615,
+                        "description": "Total sales in that period"
+                    },
+                    "series": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/AppSalesStatsItem"
+                        }
+                    }
+                }
+            },
+            "AppSalesStatsItem": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "integer",
+                        "description": "UNIX timestamp of the beginning of that day"
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Short date as label",
+                        "example": "Jul 21"
+                    },
+                    "salesCount": {
+                        "type": "integer",
+                        "example": 21,
+                        "description": "Total sales on that day"
+                    }
+                }
+            },
+            "AppItemStats": {
+                "type": "object",
+                "properties": {
+                    "itemCode": {
+                        "type": "string",
+                        "description": "Item ID"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Item Name"
+                    },
+                    "salesCount": {
+                        "type": "integer",
+                        "example": 21,
+                        "description": "Total sales of that item"
+                    },
+                    "total": {
+                        "type": "string",
+                        "format": "decimal",
+                        "description": "The total amount of sales of that item"
+                    },
+                    "totalFormatted": {
+                        "type": "string",
+                        "description": "The formatted total amount of sales of that item",
+                        "example": "615.21 USD"
+                    }
+                }
             }
         }
     },

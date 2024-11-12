@@ -15,10 +15,14 @@ using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
 using ExchangeSharp;
+using Microsoft.AspNetCore.Html;
+using Microsoft.AspNetCore.Mvc.Localization;
 using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.AspNetCore.Razor.Language.Intermediate;
+using Microsoft.AspNetCore.Razor.TagHelpers;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.Extensions.FileSystemGlobbing;
 using NBitcoin;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -27,6 +31,7 @@ using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using Xunit;
 using Xunit.Abstractions;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace BTCPayServer.Tests
 {
@@ -267,6 +272,63 @@ retry:
             Thread.Sleep(200);
         }
 
+        class TranslatedKeyNodeWalker : IntermediateNodeWalker
+        {
+            private List<string> _defaultTranslatedKeys;
+            private string _txt;
+
+            public TranslatedKeyNodeWalker(List<string> defaultTranslatedKeys)
+            {
+                _defaultTranslatedKeys = defaultTranslatedKeys;
+            }
+
+            public TranslatedKeyNodeWalker(List<string> defaultTranslatedKeys, string txt) : this(defaultTranslatedKeys)
+            {
+                _txt = txt;
+            }
+
+            public override void VisitTagHelper(TagHelperIntermediateNode node)
+            {
+                if (node.TagName == "input")
+                {
+                    foreach (var tagHelper in node.TagHelpers)
+                    {
+                        if (tagHelper.Name.EndsWith("TranslateTagHelper"))
+                        {
+                            var inner = ToString(node);
+                            if (inner.Contains("type=\"submit\""))
+                            {
+                                var m = Regex.Match(inner, "value=\"(.*?)\"");
+                                if (m.Success)
+                                {
+                                    _defaultTranslatedKeys.Add(m.Groups[1].Value);
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+                foreach (var tagHelper in node.TagHelpers)
+                {
+                    if (tagHelper.Name.EndsWith("TranslateTagHelper"))
+                    {
+                        var htmlContent = node.FindDescendantNodes<HtmlContentIntermediateNode>().FirstOrDefault();
+                        if (htmlContent is not null)
+                        {
+                            var inner = ToString(htmlContent);
+                            _defaultTranslatedKeys.Add(inner);
+                        }
+                    }
+                }
+                base.VisitTagHelper(node);
+            }
+
+            private string ToString(IntermediateNode node)
+            {
+                return _txt.Substring(node.Source.Value.AbsoluteIndex, node.Source.Value.Length);
+            }
+        }
+
         /// <summary>
         /// This utilities crawl through the cs files in search for
         /// Display attributes, then update Translations.Default to list them
@@ -289,58 +351,66 @@ retry:
                 {
                     defaultTranslatedKeys.Add(k);
                 }
+
+                AddLocalizers(defaultTranslatedKeys, txt);
             }
 
             // Go through all cshtml file, search for text-translate or ViewLocalizer usage
-            using (var tester = CreateServerTester())
+            using (var tester = CreateServerTester(newDb: true))
             {
                 await tester.StartAsync();
                 var engine = tester.PayTester.GetService<RazorProjectEngine>();
-                foreach (var file in soldir.EnumerateFiles("*.cshtml", SearchOption.AllDirectories))
+                var files = soldir.EnumerateFiles("*.cshtml", SearchOption.AllDirectories)
+                    .Union(soldir.EnumerateFiles("*.razor", SearchOption.AllDirectories));
+                foreach (var file in files)
                 {
                     var filePath = file.FullName;
                     var txt = File.ReadAllText(file.FullName);
-                    if (txt.Contains("ViewLocalizer"))
-                    {
-                        var matches = Regex.Matches(txt, "ViewLocalizer\\[\"(.*?)\"[\\],]");
-                        foreach (Match match in matches)
-                        {
-                            defaultTranslatedKeys.Add(match.Groups[1].Value);
-                        }
-                    }
-                    else if (txt.Contains("text-translate"))
-                    {
-                        filePath = filePath.Replace(Path.Combine(soldir.FullName, "BTCPayServer"), "/");
-                        var item = engine.FileSystem.GetItem(filePath);
-                        
-                        var node = (DocumentIntermediateNode)engine.Process(item).Items[typeof(DocumentIntermediateNode)];
-                        foreach (var n in node.FindDescendantNodes<TagHelperIntermediateNode>())
-                        {
-                            foreach (var tagHelper in n.TagHelpers)
-                            {
-                                if (tagHelper.Name.EndsWith("TranslateTagHelper"))
-                                {
-                                    var htmlContent = n.FindDescendantNodes<HtmlContentIntermediateNode>().First();
-                                    var inner = txt.Substring(htmlContent.Source.Value.AbsoluteIndex, htmlContent.Source.Value.Length);
-                                    defaultTranslatedKeys.Add(inner);
-                                }
-                            }
-                        }
-                        
-                    }
+                    AddLocalizers(defaultTranslatedKeys, txt);
+
+                    filePath = filePath.Replace(Path.Combine(soldir.FullName, "BTCPayServer"), "/");
+                    var item = engine.FileSystem.GetItem(filePath);
+
+                    var node = (DocumentIntermediateNode)engine.Process(item).Items[typeof(DocumentIntermediateNode)];
+                    var w = new TranslatedKeyNodeWalker(defaultTranslatedKeys, txt);
+                    w.Visit(node);
                 }
 
             }
-            defaultTranslatedKeys = defaultTranslatedKeys.Distinct().OrderBy(o => o).ToList();
+            defaultTranslatedKeys = defaultTranslatedKeys.Select(d => d.Trim()).Distinct().OrderBy(o => o).ToList();
+            JObject obj = new JObject();
+            foreach (var v in defaultTranslatedKeys)
+            {
+                obj.Add(v, "");
+            }
+
             var path = Path.Combine(soldir.FullName, "BTCPayServer/Services/Translations.Default.cs");
             var defaultTranslation = File.ReadAllText(path);
             var startIdx = defaultTranslation.IndexOf("\"\"\"");
             var endIdx = defaultTranslation.LastIndexOf("\"\"\"");
             var content = defaultTranslation.Substring(0, startIdx + 3);
-            content += "\n" + String.Join('\n', defaultTranslatedKeys) + "\n";
+            content += "\n" + obj.ToString(Formatting.Indented) + "\n";
             content += defaultTranslation.Substring(endIdx);
             File.WriteAllText(path, content);
         }
+
+        private static void AddLocalizers(List<string> defaultTranslatedKeys, string txt)
+        {
+            foreach (string localizer in new[] { "ViewLocalizer", "StringLocalizer" })
+            {
+                if (txt.Contains(localizer))
+                {
+                    var matches = Regex.Matches(txt, localizer + "\\[\"(.*?)\"[\\],]");
+                    foreach (Match match in matches)
+                    {
+                        var k = match.Groups[1].Value;
+                        k = k.Replace("\\", "");
+                        defaultTranslatedKeys.Add(k);
+                    }
+                }
+            }
+        }
+
         class DisplayNameWalker : CSharpSyntaxWalker
         {
             public List<string> Keys = new List<string>();
