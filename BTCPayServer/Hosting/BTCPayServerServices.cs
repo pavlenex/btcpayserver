@@ -86,6 +86,7 @@ namespace BTCPayServer.Hosting
         }
         public static IServiceCollection AddBTCPayServer(this IServiceCollection services, IConfiguration configuration, Logs logs)
         {
+            services.TryAddSingleton<CallbackGenerator>();
             services.TryAddSingleton<IStringLocalizerFactory, LocalizerFactory>();
             services.TryAddSingleton<IHtmlLocalizerFactory, LocalizerFactory>();
             services.TryAddSingleton<LocalizerService>();
@@ -352,6 +353,8 @@ namespace BTCPayServer.Hosting
             services.TryAddSingleton<StoreRepository>();
             services.TryAddSingleton<PaymentRequestRepository>();
             services.TryAddSingleton<BTCPayWalletProvider>();
+            services.AddSingleton<PendingTransactionService>();
+            services.AddScheduledTask<PendingTransactionService>(TimeSpan.FromMinutes(10));
             services.TryAddSingleton<WalletReceiveService>();
             services.AddSingleton<IHostedService>(provider => provider.GetService<WalletReceiveService>());
 
@@ -532,7 +535,8 @@ o.GetRequiredService<IEnumerable<IPaymentLinkExtension>>().ToDictionary(o => o.P
                 { "TRY", "btcturk" },
                 { "UGX", "yadio"},
                 { "RSD", "bitpay"},
-                { "NGN", "bitnob"}
+                { "NGN", "bitnob"},
+                { "NOK", "barebitcoin"}
             })
             {
                 var r = new DefaultRules.Recommendation(rule.Key, rule.Value);
@@ -587,6 +591,8 @@ o.GetRequiredService<IEnumerable<IPaymentLinkExtension>>().ToDictionary(o => o.P
             services.AddRateProvider<YadioRateProvider>();
             services.AddRateProvider<BtcTurkRateProvider>();
             services.AddRateProvider<FreeCurrencyRatesRateProvider>();
+            services.AddRateProvider<BitmyntRateProvider>();
+            services.AddRateProvider<BareBitcoinRateProvider>();
 
             services.AddSingleton<InvoiceBlobMigratorHostedService>();
             services.AddSingleton<IHostedService, InvoiceBlobMigratorHostedService>(o => o.GetRequiredService<InvoiceBlobMigratorHostedService>());

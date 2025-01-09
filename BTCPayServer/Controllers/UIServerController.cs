@@ -64,7 +64,7 @@ namespace BTCPayServer.Controllers
         private readonly StoredFileRepository _StoredFileRepository;
         private readonly IFileService _fileService;
         private readonly IEnumerable<IStorageProviderService> _StorageProviderServices;
-        private readonly LinkGenerator _linkGenerator;
+        private readonly CallbackGenerator _callbackGenerator;
         private readonly UriResolver _uriResolver;
         private readonly EmailSenderFactory _emailSenderFactory;
         private readonly TransactionLinkProviders _transactionLinkProviders;
@@ -90,7 +90,7 @@ namespace BTCPayServer.Controllers
             EventAggregator eventAggregator,
             IOptions<ExternalServicesOptions> externalServiceOptions,
             Logs logs,
-            LinkGenerator linkGenerator,
+            CallbackGenerator callbackGenerator,
             UriResolver uriResolver,
             EmailSenderFactory emailSenderFactory,
             IHostApplicationLifetime applicationLifetime,
@@ -119,7 +119,7 @@ namespace BTCPayServer.Controllers
             _eventAggregator = eventAggregator;
             _externalServiceOptions = externalServiceOptions;
             Logs = logs;
-            _linkGenerator = linkGenerator;
+            _callbackGenerator = callbackGenerator;
             _uriResolver = uriResolver;
             _emailSenderFactory = emailSenderFactory;
             ApplicationLifetime = applicationLifetime;
@@ -697,7 +697,7 @@ namespace BTCPayServer.Controllers
                 var lnConfig = _LnConfigProvider.GetConfig(configKey);
                 if (lnConfig != null)
                 {
-                    model.QRCodeLink = Request.GetAbsoluteUri(Url.Action(nameof(GetLNDConfig), new { configKey = configKey }));
+                    model.QRCodeLink = Url.ActionAbsolute(Request, nameof(GetLNDConfig), new { configKey }).ToString();
                     model.QRCode = $"config={model.QRCodeLink}";
                 }
             }
@@ -1199,7 +1199,7 @@ namespace BTCPayServer.Controllers
         [HttpGet("server/emails")]
         public async Task<IActionResult> Emails()
         {
-            var email = await _SettingsRepository.GetSettingAsync<EmailSettings>() ?? new EmailSettings();
+            var email = await _emailSenderFactory.GetSettings() ?? new EmailSettings();
             var vm = new ServerEmailsViewModel(email)
             {
                 EnableStoresToUseServerEmailSettings = !_policiesSettings.DisableStoresToUseServerEmailSettings
@@ -1216,7 +1216,7 @@ namespace BTCPayServer.Controllers
                 {
                     if (model.PasswordSet)
                     {
-                        var settings = await _SettingsRepository.GetSettingAsync<EmailSettings>() ?? new EmailSettings();
+                        var settings = await _emailSenderFactory.GetSettings() ?? new EmailSettings();
                         model.Settings.Password = settings.Password;
                     }
                     model.Settings.Validate("Settings.", ModelState);
@@ -1262,7 +1262,7 @@ namespace BTCPayServer.Controllers
                 ModelState.AddModelError("Settings.From", StringLocalizer["Invalid email"]);
                 return View(model);
             }
-            var oldSettings = await _SettingsRepository.GetSettingAsync<EmailSettings>() ?? new EmailSettings();
+            var oldSettings = await _emailSenderFactory.GetSettings() ?? new EmailSettings();
             if (new ServerEmailsViewModel(oldSettings).PasswordSet)
             {
                 model.Settings.Password = oldSettings.Password;
