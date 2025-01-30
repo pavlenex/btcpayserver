@@ -526,6 +526,7 @@ o.GetRequiredService<IEnumerable<IPaymentLinkExtension>>().ToDictionary(o => o.P
             {
                 { "EUR", "kraken" },
                 { "USD", "kraken" },
+                { "CAD", "kraken" },
                 { "GBP", "kraken" },
                 { "CHF", "kraken" },
                 { "GTQ", "bitpay" },
@@ -642,6 +643,9 @@ o.GetRequiredService<IEnumerable<IPaymentLinkExtension>>().ToDictionary(o => o.P
                 services.AddSingleton<IPaymentMethodBitpayAPIExtension>(provider =>
 (IPaymentMethodBitpayAPIExtension)ActivatorUtilities.CreateInstance(provider, typeof(BitcoinPaymentMethodBitpayAPIExtension), new object[] { pmi }));
 
+                services.AddSingleton<ICheckoutCheatModeExtension>(provider =>
+(ICheckoutCheatModeExtension)ActivatorUtilities.CreateInstance(provider, typeof(BitcoinCheckoutCheatModeExtension), new object[] { network }));
+
                 if (!network.ReadonlyWallet && network.WalletSupported)
                 {
                     var payoutMethodId = PayoutTypes.CHAIN.GetPayoutMethodId(network.CryptoCode);
@@ -669,6 +673,8 @@ o.GetRequiredService<IEnumerable<IPaymentLinkExtension>>().ToDictionary(o => o.P
                     var payoutMethodId = PayoutTypes.LN.GetPayoutMethodId(network.CryptoCode);
                     services.AddSingleton<IPayoutHandler>(provider =>
     (IPayoutHandler)ActivatorUtilities.CreateInstance(provider, typeof(LightningLikePayoutHandler), new object[] { payoutMethodId, network }));
+                    services.AddSingleton<ICheckoutCheatModeExtension>(provider =>
+(ICheckoutCheatModeExtension)ActivatorUtilities.CreateInstance(provider, typeof(LightningCheckoutCheatModeExtension), new object[] { network }));
                 }
                 // LNURL
                 {

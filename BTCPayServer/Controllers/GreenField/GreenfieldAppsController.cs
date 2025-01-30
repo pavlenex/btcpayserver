@@ -6,6 +6,7 @@ using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Abstractions.Models;
+using BTCPayServer.Abstractions.Services;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
@@ -38,13 +39,16 @@ namespace BTCPayServer.Controllers.Greenfield
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IFileService _fileService;
 
+        public Safe Safe { get; }
+
         public GreenfieldAppsController(
             AppService appService,
             UriResolver uriResolver,
             StoreRepository storeRepository,
             CurrencyNameTable currencies,
             IFileService fileService,
-            UserManager<ApplicationUser> userManager
+            UserManager<ApplicationUser> userManager,
+            Safe safe
         )
         {
             _appService = appService;
@@ -53,6 +57,7 @@ namespace BTCPayServer.Controllers.Greenfield
             _currencies = currencies;
             _fileService = fileService;
             _userManager = userManager;
+            Safe = safe;
         }
 
         [HttpPost("~/api/v1/stores/{storeId}/apps/crowdfund")]
@@ -305,7 +310,8 @@ namespace BTCPayServer.Controllers.Greenfield
             var parsedSounds = ValidateStringArray(request.Sounds);
             var parsedColors = ValidateStringArray(request.AnimationColors);
             Enum.TryParse<BTCPayServer.Services.Apps.CrowdfundResetEvery>(request.ResetEvery.ToString(), true, out var resetEvery);
-            
+            if (request.HtmlMetaTags is not null)
+                request.HtmlMetaTags = Safe.RawMeta(request.HtmlMetaTags, out _);
             return new CrowdfundSettings
             {
                 Title = request.Title?.Trim() ?? request.AppName,
@@ -333,6 +339,8 @@ namespace BTCPayServer.Controllers.Greenfield
                 SortPerksByPopularity = request.SortPerksByPopularity ?? false,
                 Sounds = parsedSounds ?? new CrowdfundSettings().Sounds,
                 AnimationColors = parsedColors ?? new CrowdfundSettings().AnimationColors,
+                HtmlMetaTags = request.HtmlMetaTags,
+                HtmlLang  = request.HtmlLang,
                 FormId = request.FormId
             };
         }
@@ -340,6 +348,8 @@ namespace BTCPayServer.Controllers.Greenfield
         private PointOfSaleSettings ToPointOfSaleSettings(PointOfSaleAppRequest request, PointOfSaleSettings settings)
         {
             Enum.TryParse<BTCPayServer.Plugins.PointOfSale.PosViewType>(request.DefaultView.ToString(), true, out var defaultView);
+            if (request.HtmlMetaTags is not null)
+                request.HtmlMetaTags = Safe.RawMeta(request.HtmlMetaTags, out _);
 
             return new PointOfSaleSettings
             {
@@ -360,6 +370,8 @@ namespace BTCPayServer.Controllers.Greenfield
                 NotificationUrl = request.NotificationUrl,
                 RedirectUrl = request.RedirectUrl,
                 Description = request.Description,
+                HtmlLang = request.HtmlLang,
+                HtmlMetaTags = request.HtmlMetaTags,
                 RedirectAutomatically = request.RedirectAutomatically,
                 FormId = request.FormId
             };
@@ -421,6 +433,8 @@ namespace BTCPayServer.Controllers.Greenfield
                 FormId = settings.FormId,
                 NotificationUrl = settings.NotificationUrl,
                 RedirectUrl = settings.RedirectUrl,
+                HtmlLang = settings.HtmlLang,
+                HtmlMetaTags = settings.HtmlMetaTags,
                 Description = settings.Description,
                 RedirectAutomatically = settings.RedirectAutomatically,
                 Items = items
@@ -484,6 +498,9 @@ namespace BTCPayServer.Controllers.Greenfield
                 SortPerksByPopularity = settings.SortPerksByPopularity,
                 Sounds = settings.Sounds,
                 AnimationColors = settings.AnimationColors,
+                HtmlLang = settings.HtmlLang,
+                HtmlMetaTags = settings.HtmlMetaTags,
+                FormId = settings.FormId,
                 Perks = perks
             };
         }
