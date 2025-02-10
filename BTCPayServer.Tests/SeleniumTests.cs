@@ -32,6 +32,7 @@ using Microsoft.EntityFrameworkCore;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using NBitcoin.Payment;
+using NBXplorer.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using OpenQA.Selenium;
@@ -1884,11 +1885,9 @@ namespace BTCPayServer.Tests
 
             //send money to addr and ensure it changed
             var sess = await s.Server.ExplorerClient.CreateWebsocketNotificationSessionAsync();
-            await sess.ListenAllTrackedSourceAsync();
-            var nextEvent = sess.NextEventAsync();
             await s.Server.ExplorerNode.SendToAddressAsync(BitcoinAddress.Create(receiveAddr, Network.RegTest),
                 Money.Parse("0.1"));
-            await nextEvent;
+            await sess.WaitNext<NewTransactionEvent>(e => e.Outputs.FirstOrDefault()?.Address.ToString() == receiveAddr);
             await Task.Delay(200);
             s.Driver.Navigate().Refresh();
             s.Driver.FindElement(By.CssSelector("button[value=generate-new-address]")).Click();
@@ -1898,6 +1897,7 @@ namespace BTCPayServer.Tests
 
             // Check the label is applied to the tx
             s.Driver.WaitWalletTransactionsLoaded();
+            // Sometimes this fails in local, but not CI
             Assert.Equal("label2", s.Driver.FindElement(By.XPath("//*[@id=\"WalletTransactionsList\"]//*[contains(@class, 'transaction-label')]")).Text);
 
             //change the wallet and ensure old address is not there and generating a new one does not result in the prev one
@@ -1960,7 +1960,7 @@ namespace BTCPayServer.Tests
             s.Driver.FindElement(By.Id("SignTransaction")).Click();
             // Back button should lead back to the previous page inside the send wizard
             var backUrl = s.Driver.FindElement(By.Id("GoBack")).GetAttribute("href");
-            Assert.EndsWith($"/send?returnUrl={walletTransactionUri.AbsolutePath}", backUrl);
+            Assert.EndsWith($"/send?returnUrl={Uri.EscapeDataString(walletTransactionUri.AbsolutePath)}", backUrl);
             // Cancel button should lead to the page that referred to the send wizard
             var cancelUrl = s.Driver.FindElement(By.Id("CancelWizard")).GetAttribute("href");
             Assert.EndsWith(walletTransactionUri.AbsolutePath, cancelUrl);
