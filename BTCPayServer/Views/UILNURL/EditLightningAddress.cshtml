@@ -26,7 +26,7 @@
 }
 
 <div class="sticky-header">
-    <h2 text-translate="true">@ViewData["Title"]</h2>
+    <h2>@ViewData["Title"]</h2>
 	<a id="page-primary" data-bs-toggle="collapse" data-bs-target="#AddAddress" class="btn btn-primary" role="button">
         Add Address
     </a>
@@ -46,7 +46,7 @@
 <form asp-action="EditLightningAddress" method="post">
     @{
         var showAddForm = !ViewContext.ViewData.ModelState.IsValid || !string.IsNullOrEmpty(Model.Add?.Username) || Model.Add?.Max != null || Model.Add?.Min != null || !string.IsNullOrEmpty(Model.Add?.CurrencyCode);
-        var showAdvancedOptions = !string.IsNullOrEmpty(Model.Add?.CurrencyCode) || Model.Add?.Min != null || Model.Add?.Max != null;
+        var showAdvancedOptions = !string.IsNullOrEmpty(Model.Add?.CurrencyCode) || !string.IsNullOrEmpty(Model.Add?.InvoiceMetadata) || Model.Add?.Min != null || Model.Add?.Max != null;
      }
     
     <div class="collapse @(showAddForm ? "show": "")" id="AddAddress">
@@ -124,7 +124,7 @@
                 var address = $"{Model.Items[index].Username}@{Context.Request.Host.ToUriComponent()}";
                 <tr>
                     <td>
-                        <div class="input-group" data-clipboard="@address">
+                        <div class="input-group clipboard-button" data-clipboard="@address">
                             <input type="text" class="form-control copy-cursor lightning-address-value" readonly="readonly" value="@address"/>
                             <button type="button" class="btn btn-outline-secondary px-3">
                                 <vc:icon symbol="actions-copy" />

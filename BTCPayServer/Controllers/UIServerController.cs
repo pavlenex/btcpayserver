@@ -1256,17 +1256,15 @@ namespace BTCPayServer.Controllers
                 return RedirectToAction(nameof(Emails));
             }
             
-            // save
+            // save if user provided valid email; this will also clear settings if no model.Settings.From
             if (model.Settings.From is not null && !MailboxAddressValidator.IsMailboxAddress(model.Settings.From))
             {
                 ModelState.AddModelError("Settings.From", StringLocalizer["Invalid email"]);
                 return View(model);
             }
             var oldSettings = await _emailSenderFactory.GetSettings() ?? new EmailSettings();
-            if (new ServerEmailsViewModel(oldSettings).PasswordSet)
-            {
+            if (!string.IsNullOrEmpty(oldSettings.Password))
                 model.Settings.Password = oldSettings.Password;
-            }
             
             await _SettingsRepository.UpdateSetting(model.Settings);
             TempData[WellKnownTempData.SuccessMessage] = StringLocalizer["Email settings saved"].Value;
