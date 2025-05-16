@@ -145,7 +145,7 @@ namespace BTCPayServer.Controllers
                 amount = amountDue;
             var redirectUrl = _linkGenerator.PaymentRequestLink(id, request.Scheme, request.Host, request.PathBase);
 
-            JObject invoiceMetadata = prData.GetBlob()?.FormResponse ?? new JObject();
+            JObject invoiceMetadata = prBlob.FormResponse ?? new JObject();
             invoiceMetadata.Merge(new InvoiceMetadata
             {
                 OrderId = PaymentRequestRepository.GetOrderIdForPaymentRequest(id),
@@ -158,12 +158,13 @@ namespace BTCPayServer.Controllers
                 new CreateInvoiceRequest
                 {
                     Metadata = invoiceMetadata,
-                    Currency = prBlob.Currency,
+                    Currency = prData.Currency,
                     Amount = amount,
                     Checkout = { RedirectURL = redirectUrl },
                     Receipt = new InvoiceDataBase.ReceiptOptions { Enabled = false }
                 };
-
+            if (prData.ReferenceId is not null or "")
+                invoiceRequest.AdditionalSearchTerms = [prData.ReferenceId];
             var additionalTags = new List<string> { PaymentRequestRepository.GetInternalTag(id) };
             return await CreateInvoiceCoreRaw(invoiceRequest, storeData, request.GetAbsoluteRoot(), additionalTags, cancellationToken);
         }
@@ -268,13 +269,11 @@ namespace BTCPayServer.Controllers
                             "No wallet has been linked to your BTCPay Store. See the following link for more information on how to connect your store and wallet. (https://docs.btcpayserver.org/WalletSetup/)");
                     else
                     {
-                        var list = logs.ToList();
-                        var errors = list.Where(l => l.Severity == InvoiceEventData.EventSeverity.Error).Select(l => l.Log);
                         message.AppendLine("Error retrieving a matching payment method or rate.");
-                        foreach (var error in errors)
-                            message.AppendLine(error);
+                        foreach (var error in logs.ToList())
+                            message.AppendLine(error.ToString());
                     }
-                    
+
                     throw new BitpayHttpException(400, message.ToString());
                 }
                 entity.SetPaymentPrompts(new PaymentPromptDictionary(contexts.Select(c => c.Prompt)));
