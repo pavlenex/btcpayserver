@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -59,6 +60,8 @@ namespace BTCPayServer.Tests
             Assert.DoesNotContain("Error", driver.Title, StringComparison.OrdinalIgnoreCase);
         }
 
+        public static string NormalizeWhitespaces(this string input) =>
+            string.Concat((input??"").Where(c => !char.IsWhiteSpace(c)));
 
         public static async Task AssertNoError(this IPage page)
         {
@@ -165,12 +168,6 @@ retry:
             var wait = new WebDriverWait(driver, SeleniumTester.ImplicitWait);
             wait.UntilJsIsReady();
             wait.Until(d => d.WaitForElement(By.CssSelector("#WalletTransactions[data-loaded='true']")));
-        }
-
-        public static async Task WaitWalletTransactionsLoaded(this IPage page)
-        {
-            await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-            await page.Locator("#WalletTransactions[data-loaded='true']").WaitForAsync(new() { State = WaitForSelectorState.Visible });
         }
 
         public static IWebElement WaitForElement(this IWebDriver driver, By selector)

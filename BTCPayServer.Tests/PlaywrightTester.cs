@@ -55,32 +55,6 @@ namespace BTCPayServer.Tests
             await Page.AssertNoError();
         }
 
-        public async Task PayInvoiceAsync(IPage page, bool mine = false, decimal? amount = null)
-        {
-            if (amount is not null)
-            {
-                try
-                {
-                    await page.Locator("#test-payment-amount").ClearAsync();
-                }
-                catch (PlaywrightException)
-                {
-                    await page.Locator("#test-payment-amount").ClearAsync();
-                }
-                await page.Locator("#test-payment-amount").FillAsync(amount.ToString());
-            }
-            await page.Locator("#FakePayment").WaitForAsync();
-            await page.Locator("#FakePayment").ClickAsync();
-            await TestUtils.EventuallyAsync(async () =>
-            {
-                await page.Locator("#CheatSuccessMessage").WaitForAsync();
-            });
-            if (mine)
-            {
-                await MineBlockOnInvoiceCheckout(page);
-            }
-        }
-
         public async Task GoToInvoices(string storeId = null)
         {
             if (storeId is null)
@@ -152,13 +126,6 @@ namespace BTCPayServer.Tests
             }
         }
 
-        public async Task MineBlockOnInvoiceCheckout(IPage page)
-        {
-        retry:
-            try { await page.Locator("#mine-block button").ClickAsync(); }
-            catch (PlaywrightException) { goto retry; }
-        }
-
         public async Task<ILocator> FindAlertMessage(StatusMessageModel.StatusSeverity severity = StatusMessageModel.StatusSeverity.Success, string partialText = null)
         {
             var locator = await FindAlertMessage(new[] { severity });
@@ -190,14 +157,16 @@ namespace BTCPayServer.Tests
             }
         }
 
-        public async Task GoToUrl(string relativeUrl)
+        public async Task GoToUrl(string uri)
         {
-            await Page.GotoAsync(Link(relativeUrl), new() { WaitUntil  = WaitUntilState.Commit } );
+            await Page.GotoAsync(Link(uri), new() { WaitUntil  = WaitUntilState.Commit } );
         }
 
-        public string Link(string relativeLink)
+        public string Link(string uri)
         {
-            return ServerUri.AbsoluteUri.WithoutEndingSlash() + relativeLink.WithStartingSlash();
+            if (Uri.IsWellFormedUriString(uri, UriKind.Absolute))
+                return uri;
+            return ServerUri.AbsoluteUri.WithoutEndingSlash() + uri.WithStartingSlash();
         }
 
         public async Task<string> RegisterNewUser(bool isAdmin = false)
@@ -333,6 +302,18 @@ namespace BTCPayServer.Tests
             }
             else { await GoToUrl("/"); }
         }
+        public async Task AddUserToStore(string storeId, string email, string role)
+        {
+            var addUser = Page.Locator("#AddUser");
+            if (!await addUser.IsVisibleAsync())
+            {
+                await GoToStore(storeId, StoreNavPages.Users);
+            }
+            await Page.FillAsync("#Email", email);
+            await Page.SelectOptionAsync("#Role", role);
+            await Page.ClickAsync("#AddUser");
+            await FindAlertMessage(partialText: "The user has been added successfully");
+        }
         public async Task LogIn(string user, string password = "123456")
         {
             await Page.FillAsync("#Email", user);
@@ -424,6 +405,8 @@ namespace BTCPayServer.Tests
                 StoreId = storeId;
                 if (WalletId != null)
                     WalletId = new WalletId(storeId, WalletId.CryptoCode);
+                if (storeNavPage != StoreNavPages.General)
+                    await Page.Locator($"#StoreNav-{StoreNavPages.General}").ClickAsync();
             }
             await Page.Locator($"#StoreNav-{storeNavPage}").ClickAsync();
         }
@@ -491,6 +474,7 @@ namespace BTCPayServer.Tests
                     goto retry;
                 }
             }
+            await Server.ExplorerNode.GenerateAsync(1);
             await Page.ReloadAsync();
             await Page.Locator("#CancelWizard").ClickAsync();
             return addressStr;
@@ -501,6 +485,118 @@ namespace BTCPayServer.Tests
         public async Task ConfirmModal()
         {
             await Page.ClickAsync(".modal.fade.show .modal-confirm");
+        }
+
+        public async Task<(string appName, string appId)> CreateApp(string type, string name = null)
+        {
+            if (string.IsNullOrEmpty(name))
+                name = $"{type}-{Guid.NewGuid().ToString()[..14]}";
+            await Page.Locator($"#StoreNav-Create{type}").ClickAsync();
+            await Page.Locator("[name='AppName']").FillAsync(name);
+            await ClickPagePrimary();
+            await FindAlertMessage(partialText: "App successfully created");
+            var appId = Page.Url.Split('/')[^3];
+            return (name, appId);
+        }
+
+        public async Task PayInvoice(bool mine = false, decimal? amount = null)
+        {
+            if (amount is not null)
+            {
+                await Page.FillAsync("#test-payment-amount", amount.ToString());
+            }
+            await Page.ClickAsync("#FakePayment");
+            await Page.Locator("#CheatSuccessMessage").WaitForAsync();
+            await Page.Locator("text=Payment Received").WaitForAsync();
+
+            if (mine)
+            {
+                await MineBlockOnInvoiceCheckout();
+            }
+        }
+
+        public async Task MineBlockOnInvoiceCheckout()
+        {
+            await Page.ClickAsync("#mine-block button");
+        }
+
+        class SwitchDisposable(IPage newPage, IPage oldPage, PlaywrightTester tester, bool closeAfter) : IAsyncDisposable
+        {
+            public async ValueTask DisposeAsync()
+            {
+                if (closeAfter)
+                    await newPage.CloseAsync();
+                tester.Page = oldPage;
+            }
+        }
+
+        public async Task<IAsyncDisposable> SwitchPage(Task<IPage> page, bool closeAfter = true)
+        {
+            var p = await page;
+            return await SwitchPage(p, closeAfter);
+        }
+        public async Task<IAsyncDisposable> SwitchPage(IPage page, bool closeAfter = true)
+        {
+            var old = Page;
+            Page = page;
+            await page.BringToFrontAsync();
+            return new SwitchDisposable(page, old, this, closeAfter);
+        }
+
+        public async Task<WalletTransactionsPMO> GoToWalletTransactions(WalletId walletId = null)
+        {
+            await GoToWallet(walletId, navPages: WalletsNavPages.Transactions);
+            await Page.Locator("#WalletTransactions[data-loaded='true']").WaitForAsync(new() { State = WaitForSelectorState.Visible });
+            return new WalletTransactionsPMO(Page);
+        }
+
+#nullable enable
+        public class WalletTransactionsPMO(IPage page)
+        {
+            public Task SelectAll() => page.SetCheckedAsync(".mass-action-select-all", true);
+            public async Task Select(params uint256[] txs)
+            {
+                foreach (var txId in txs)
+                {
+                    await page.SetCheckedAsync($"{TxRowSelector(txId)} .mass-action-select", true);
+                }
+            }
+
+            public Task BumpFeeSelected() => page.ClickAsync("#BumpFee");
+
+            public Task BumpFee(uint256? txId = null) => page.ClickAsync($"{TxRowSelector(txId)} .bumpFee-btn");
+            static string TxRowSelector(uint256? txId = null) => txId is null ? ".transaction-row:first-of-type"  : $".transaction-row[data-value=\"{txId}\"]";
+
+            public Task AssertHasLabels(string label) => AssertHasLabels(null, label);
+            public async Task AssertHasLabels(uint256? txId, string label)
+            {
+                await page.ReloadAsync();
+                await page.Locator($"{TxRowSelector(txId)} .transaction-label[data-value=\"{label}\"]").WaitForAsync();
+            }
+
+            public async Task AssertNotFound(uint256 txId)
+            {
+                Assert.False(await page.Locator(TxRowSelector(txId)).IsVisibleAsync());
+            }
+        }
+
+
+        public async Task<SendWalletPMO> GoToWalletSend(WalletId? walletId = null)
+        {
+            await GoToWallet(walletId, navPages: WalletsNavPages.Send);
+            return new(Page);
+        }
+
+        public class SendWalletPMO(IPage page)
+        {
+            public Task FillAddress(BitcoinAddress address) => page.FillAsync("[name='Outputs[0].DestinationAddress']",
+                address.ToString());
+
+            public Task SweepBalance() => page.ClickAsync("#SweepBalance");
+
+            public Task Sign() => page.ClickAsync("#SignTransaction");
+
+            public Task SetFeeRate(decimal val) => page.FillAsync("[name=\"FeeSatoshiPerByte\"]", val.ToString(CultureInfo.InvariantCulture));
         }
     }
 }

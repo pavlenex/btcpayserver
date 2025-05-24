@@ -57,12 +57,15 @@ namespace BTCPayServer.Tests
             await s.FindAlertMessage(partialText: "App updated");
             await s.Page.ClickAsync("#ViewApp");
             var popOutPage = await s.Page.Context.WaitForPageAsync();
-            await popOutPage.Locator("button[type='submit']").First.ClickAsync();
-            await popOutPage.FillAsync("[name='buyerEmail']", "aa@aa.com");
-            await popOutPage.ClickAsync("input[type='submit']");
-            await s.PayInvoiceAsync(popOutPage, true);
-            var invoiceId = popOutPage.Url[(popOutPage.Url.LastIndexOf("/", StringComparison.Ordinal) + 1)..];
-            await popOutPage.CloseAsync();
+            string invoiceId;
+            await using (var o = await s.SwitchPage(popOutPage))
+            {
+                await s.Page.Locator("button[type='submit']").First.ClickAsync();
+                await s.Page.FillAsync("[name='buyerEmail']", "aa@aa.com");
+                await s.Page.ClickAsync("input[type='submit']");
+                await s.PayInvoice(true);
+                invoiceId = s.Page.Url[(s.Page.Url.LastIndexOf("/", StringComparison.Ordinal) + 1)..];
+            }
 
             await s.Page.Context.Pages.First().BringToFrontAsync();
             await s.GoToUrl($"/invoices/{invoiceId}/");
@@ -109,7 +112,7 @@ namespace BTCPayServer.Tests
             Assert.Contains("CustomFormInputTest", await s.Page.ContentAsync());
             await s.Page.FillAsync("[name='buyerEmail']", "aa@aa.com");
             await s.Page.ClickAsync("input[type='submit']");
-            await s.PayInvoiceAsync(s.Page, true, 0.001m);
+            await s.PayInvoice(true, 0.001m);
             var result = await s.Server.PayTester.HttpClient.GetAsync(formUrl);
             Assert.Equal(HttpStatusCode.NotFound, result.StatusCode);
             await s.GoToHome();
@@ -359,7 +362,7 @@ namespace BTCPayServer.Tests
 
             // Store Email Rules
             await s.Page.ClickAsync("#ConfigureEmailRules");
-            Assert.Contains("There are no rules yet.", await s.Page.ContentAsync());
+            await s.Page.Locator("text=There are no rules yet.").WaitForAsync();
             Assert.DoesNotContain("id=\"SaveEmailRules\"", await s.Page.ContentAsync());
             Assert.DoesNotContain("You need to configure email settings before this feature works", await s.Page.ContentAsync());
 
@@ -370,6 +373,7 @@ namespace BTCPayServer.Tests
             await s.Page.FillAsync("#Subject", "Thanks!");
             await s.Page.Locator(".note-editable").FillAsync("Your invoice is settled");
             await s.Page.ClickAsync("#SaveEmailRules");
+            await s.FindAlertMessage();
             // we now have a rule
             Assert.DoesNotContain("There are no rules yet.", await s.Page.ContentAsync());
             Assert.Contains("test@gmail.com", await s.Page.ContentAsync());
