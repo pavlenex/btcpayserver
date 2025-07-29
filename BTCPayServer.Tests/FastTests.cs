@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
@@ -488,6 +489,62 @@ namespace BTCPayServer.Tests
             Assert.Equal(Money.Satoshis(200), bump.NewTxFee);
         }
 
+        [Theory]
+        [InlineData(">= 1.0.0.0", "1.0.0.0", true)]
+        [InlineData("> 1.0.0.0", "1.0.0.0", false)]
+        [InlineData("> 1.0.0.0", "1.0.0.1", true)]
+        [InlineData(">= 1.0.0.0", "1.0.0.1", true)]
+        [InlineData("<= 1.0.0.0", "1.0.0.0", true)]
+        [InlineData("< 1.0.0.0", "1.0.0.0", false)]
+        [InlineData("< 1.0.0.0", "1.0.0.1", false)]
+        [InlineData("<= 1.0.0.0", "1.0.0.1", false)]
+        [InlineData("!= 1.0.0.0", "1.0.0.0", false)]
+        [InlineData("!= 1.0.0.0", "1.0.0.1", true)]
+        [InlineData("== 1.0.0.0 || == 1.0.0.1", "1.0.0.1", true)]
+        [InlineData("== 1.0.0.0 || == 1.0.0.1", "1.0.0.0", true)]
+        [InlineData("== 1.0.0.0 || == 1.0.0.1", "1.0.0.3", false)]
+        [InlineData("== 1.0.0.0 || == 1.0.0.1", "0.0.0.9", false)]
+        // All
+        [InlineData(">= 1.2.1.0 && < 1.2.2.0", "1.2.1.0", true)]
+        [InlineData(">= 1.2.1.0 && < 1.2.2.0", "1.2.2.0", false)]
+        [InlineData(">= 1.2.1.0 && < 1.2.2.0", "1.2.1.5", true)]
+        // Above, same major
+        [InlineData("^ 1.0.0.5", "1.2.3.4", true)]
+        [InlineData("^ 1.0.0.5", "1.0.0.4", false)]
+        [InlineData("^ 1.0.0.5", "1.0.0.6", true)]
+        [InlineData("^ 1.0.0.5", "2.0.0.4", false)]
+        // Above, same major + minor
+        [InlineData("~ 1.0.0.5", "1.2.3.4", false)]
+        [InlineData("~ 1.0.0.5", "1.0.0.4", false)]
+        [InlineData("~ 1.0.0.5", "1.0.0.6", true)]
+        [InlineData("~ 1.0.2.5", "2.0.0.4", false)]
+        [InlineData("~ 1.0.2.5", "1.0.2.6", true)]
+        [InlineData("~ 1.0.2.5", "1.0.2.4", false)]
+        [InlineData("", "0.0.0.9", true)]
+        public void CanParseVersionConditions(string condition, string version, bool expected)
+        {
+            Assert.True(VersionCondition.TryParse(condition, out var cond));
+            Assert.Equal(expected, cond.IsFulfilled(Version.Parse(version)));
+            Assert.Equal(condition, cond.ToString());
+        }
+
+        [Theory]
+        [InlineData(" ~ 1.0.2.5 ", "~ 1.0.2.5")]
+        [InlineData(" == 1.0.2.5||>1.2.3", "== 1.0.2.5 || > 1.2.3")]
+        public void CanParseBadSpaceVersionCondition(string parsed, string formatted)
+        {
+            Assert.True(VersionCondition.TryParse(parsed, out var cond));
+            Assert.Equal(formatted, cond.ToString());
+            Assert.True(VersionCondition.TryParse(formatted, out cond));
+            Assert.Equal(formatted, cond.ToString());
+
+            Assert.Equal("Test: " + formatted, new IBTCPayServerPlugin.PluginDependency()
+            {
+                Identifier = "Test",
+                Condition = parsed
+            }.ToString());
+        }
+
         [Fact]
         public void CanCalculateDust()
         {
@@ -918,7 +975,7 @@ namespace BTCPayServer.Tests
             for (int i = 0; i < 5; i++)
             {
                 var expectedScripts = script.Derive(AddressIntent.Deposit, i).Miniscript.ToScripts();
-                var actual = scheme.AccountDerivation.GetDerivation(new KeyPath(0, (uint)i));
+                var actual = ((StandardDerivationStrategyBase)scheme.AccountDerivation).GetDerivation(new KeyPath(0, (uint)i));
                 Assert.Equal(expectedScripts.ScriptPubKey, actual.ScriptPubKey);
                 Assert.Equal(expectedScripts.RedeemScript, actual.Redeem);
                 if (i == 0)
@@ -1029,7 +1086,7 @@ namespace BTCPayServer.Tests
                 "ypub6WWc2gWwHbdnAAyJDnR4SPL1phRh7REqrPBfZeizaQ1EmTshieRXJC3Z5YoU4wkcdKHEjQGkh6AYEzCQC1Kz3DNaWSwdc1pc8416hAjzqyD",
                 settings.AccountOriginal);
             Assert.Equal(root.Derive(new KeyPath("m/49'/0'/0'")).Neuter().PubKey.WitHash.ScriptPubKey.Hash.ScriptPubKey,
-                settings.AccountDerivation.GetDerivation().ScriptPubKey);
+                ((StandardDerivationStrategyBase)settings.AccountDerivation).GetDerivation(new KeyPath()).ScriptPubKey);
             Assert.Equal("ElectrumFile", settings.Source);
             Assert.Null(error);
 
@@ -1101,8 +1158,7 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             Assert.True(multsig.LexicographicOrder);
             Assert.Equal(1, multsig.RequiredSignatures);
 
-            var deposit = new NBXplorer.KeyPathTemplates(null).GetKeyPathTemplate(DerivationFeature.Deposit);
-            var line = nunchuk.AccountDerivation.GetLineFor(deposit).Derive(0);
+            var line = nunchuk.AccountDerivation.GetLineFor(DerivationFeature.Deposit).Derive(0);
 
             Assert.Equal(BitcoinAddress.Create("bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku", Network.Main).ScriptPubKey,
                 line.ScriptPubKey);
@@ -1166,11 +1222,11 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
 """;
             Assert.True(parsers.TryParseWalletFile(electrumText, mainnet, out electrum, out _));
             Assert.Equal("ElectrumFile", electrum.Source);
-            Assert.Equal("0'", electrum.GetSigningAccountKeySettings().AccountKeyPath.ToString());
+            Assert.Equal("0'", electrum.GetFirstAccountKeySettings().AccountKeyPath.ToString());
             Assert.True(electrum.AccountDerivation is DirectDerivationStrategy { Segwit: true });
-            Assert.Equal("fbb5b37d", electrum.GetSigningAccountKeySettings().RootFingerprint.ToString());
+            Assert.Equal("fbb5b37d", electrum.GetFirstAccountKeySettings().RootFingerprint.ToString());
             Assert.Equal("zpub6oQLDcJLztdMD29C8D8eyZKdKVfX9txB4BxZsMif9avJZBdVWPg1wmK3Uh3VxU7KXon1wm1xzvjyqmKWguYMqyjKP5f5Cho9f7uLfmRt2Br", electrum.AccountOriginal);
-            Assert.Equal(((DirectDerivationStrategy)electrum.AccountDerivation).GetExtPubKeys().First().ParentFingerprint.ToString(), electrum.GetSigningAccountKeySettings().RootFingerprint.ToString());
+            Assert.Equal(((DirectDerivationStrategy)electrum.AccountDerivation).GetExtPubKeys().First().ParentFingerprint.ToString(), electrum.GetFirstAccountKeySettings().RootFingerprint.ToString());
 
             // Electrum with strange garbage at the end caused by the lightning support
             electrumText =

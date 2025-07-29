@@ -360,9 +360,7 @@ namespace BTCPayServer.Controllers.Greenfield
                         Timestamp = coin.Timestamp,
                         KeyPath = coin.KeyPath,
                         Confirmations = coin.Confirmations,
-                        Address = network.NBXplorerNetwork
-                            .CreateAddress(derivationScheme.AccountDerivation, coin.KeyPath, coin.ScriptPubKey)
-                            .ToString()
+                        Address = coin.Address.ToString()
                     };
                 }).ToList()
             );
@@ -582,8 +580,8 @@ namespace BTCPayServer.Controllers.Greenfield
 
             var signingKey = ExtKey.Parse(signingKeyStr, network.NBitcoinNetwork);
 
-            var signingKeySettings = derivationScheme.GetSigningAccountKeySettings(signingKey);
-            RootedKeyPath? rootedKeyPath = signingKeySettings?.GetRootedKeyPath();
+            var signingKeySettings = derivationScheme.GetAccountKeySettingsFromRoot(signingKey);
+            var rootedKeyPath = signingKeySettings?.GetRootedKeyPath();
             if (rootedKeyPath is null || signingKeySettings is null)
             {
                 return this.CreateAPIError(503, "not-available",

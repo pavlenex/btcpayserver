@@ -1,5 +1,73 @@
 # Changelog
 
+## 2.1.6
+
+### Features
+
+* Wallet: Ability to browse the addresses generated through the Receive tab (#6796) @thgO-O
+* Allowed updating payment requests as settled (#6825 #6792) @Abhijay007
+
+### Bug fixes
+
+* Fix: After connection string replacement, lightning payment would not be detected for 1 min (#6822) @NicolasDorier
+* Fix: In Email Rules show "Send the email to the buyer" checkbox only if trigger supports it (#6653 #6815) @AdamWroblewski
+* Fix: Failure to sign with Vault when a PSBT size exceeds 32KB (#6809) @NicolasDorier
+* Do not prevent the processing of other pending payouts if a store's lightning server is unresponsive @NicolasDorier
+
+## 2.1.5
+
+### Features
+
+* Wallet: Enhance manual Coin Selection with advanced filters and improved UX (#6755 #6685) @thgO-O
+* Added "Clear All" filter to Invoices (#6776 #5156) @Abhijay007
+
+### Bug fixes
+
+* Fix connection failure with phoenixd on mainnet (https://github.com/btcpayserver/BTCPayServer.Lightning/pull/170) @armelinw
+* PoS: Attempting to pay via Custom Amount in Product List mode would returns error 404. (#6786) @NicolasDorier
+* PoS: When using the Keypad (with cart), the button to proceed to checkout wasn't enabled if all selected items in the cart were free. (#6785) @NicolasDorier
+* PoS: When paying an item via Print View, the tax were not applied and receipt wasn't showing the item purchased. (#6788) @NicolasDorier
+* PoS: When paying an item via Print View, the custom amount option wasn't working. (#6788) @NicolasDorier
+
+## 2.1.4
+
+### Bug fixes
+
+* Fix keypad crash introduced by 2.1.3
+
+## 2.1.3
+
+### Bug fixes
+
+* Free items in the PoS were generating top-up invoices rather than settled invoices (#6780) @NicolasDorier
+* When a POS has a form, the amount adjusts incorrectly (#6782) @Kukks
+
+## 2.1.2
+
+### New features
+
+* POS: Apply tax rates to items, show in checkout/receipts (#6724 #6712) @NicolasDorier
+* POS: Improved total breakdown in receipts and cart (#6739) @NicolasDorier
+* POS Report: Add tip and subtotal (#6749) @NicolasDorier
+* New webhooks: InvoiceExpiredPaidPartial, InvoicePaidAfterExpiration (#5936 #6723) @rockstardev
+* Added Coinmate rate provider, recommended for CZK (#6707 #6725) @d4rp4t
+* Can RBF sweeping transactions (#6748) @NicolasDorier
+* Admin can change default store templates (#6704) @NicolasDorier
+* Store owners can configure fallback rate source (#6705) @NicolasDorier
+* Greenfield: Include `amountPaid` on greenfield invoices (#6747 #2525) @TChukwuleta
+* Phoenixd support (https://github.com/btcpayserver/BTCPayServer.Lightning/pull/169 https://github.com/btcpayserver/btcpayserver-docker/pull/987) @pm47 @armelinw
+
+### Bug fixes
+
+* Yadio rate lookup failure (#6743 #6729) @Abhijay007
+* RBF label inconsistency on replacement txs (#6748) @NicolasDorier
+* Crash when fee rate below minimum during RBF (#6748) @NicolasDorier
+
+### Improvements
+
+* Switched to textarea for full lightning connection string (#6706) @rockstardev
+* POS Keypad: shows amount being input rather than total (#6739 #6768) @NicolasDorier
+
 ## 2.1.1
 
 Note: If you installed the XPub Extractor plugin, you will need to update it.

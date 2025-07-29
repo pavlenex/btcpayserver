@@ -78,6 +78,7 @@ using Microsoft.Extensions.Caching.Memory;
 using PosViewType = BTCPayServer.Client.Models.PosViewType;
 using BTCPayServer.PaymentRequest;
 using BTCPayServer.Views.Stores;
+using NBXplorer.DerivationStrategy;
 
 namespace BTCPayServer.Tests
 {
@@ -730,7 +731,7 @@ namespace BTCPayServer.Tests
 
             // Sending a coin
             var txId = tester.ExplorerNode.SendToAddress(
-                btcDerivationScheme.GetDerivation(new KeyPath("0/90")).ScriptPubKey, Money.Coins(1.0m));
+                ((StandardDerivationStrategyBase)btcDerivationScheme).GetDerivation(new KeyPath("0/90")).ScriptPubKey, Money.Coins(1.0m));
             tester.ExplorerNode.Generate(1);
             var transactions = Assert.IsType<ListTransactionsViewModel>(Assert
                 .IsType<ViewResult>(walletController.WalletTransactions(walletId, loadTransactions: true).Result).Model);
@@ -1453,6 +1454,7 @@ namespace BTCPayServer.Tests
                 Assert.Contains("X_TRY = btcturk(X_TRY);", defaultScript);
 
                 await Test("BTC_JPY");
+                await tester.Page.Locator(".testresult .testresult_rule").First.WaitForAsync();
                 rules = await tester.Page.Locator(".testresult .testresult_rule").AllAsync();
                 if (fallback)
                 {
@@ -2827,8 +2829,7 @@ namespace BTCPayServer.Tests
             var v = store.GetPaymentMethodConfig<DerivationSchemeSettings>(pmi, handlers);
             Assert.Equal(derivation, v.AccountDerivation.ToString());
             Assert.Equal(derivation, v.AccountOriginal);
-            Assert.Equal(xpub, v.SigningKey.ToString());
-            Assert.Equal(xpub, v.GetSigningAccountKeySettings().AccountKey.ToString());
+            Assert.Equal(xpub, v.GetFirstAccountKeySettings().AccountKey.ToString());
 
             await acc.RegisterLightningNodeAsync("BTC", LightningConnectionType.CLightning, true);
             store = await tester.PayTester.StoreRepository.FindStore(acc.StoreId);

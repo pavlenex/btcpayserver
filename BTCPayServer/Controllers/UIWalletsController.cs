@@ -76,6 +76,7 @@ namespace BTCPayServer.Controllers
         private readonly DefaultRulesCollection _defaultRules;
         private readonly Dictionary<PaymentMethodId, ICheckoutModelExtension> _paymentModelExtensions;
         private readonly TransactionLinkProviders _transactionLinkProviders;
+        private readonly InvoiceRepository _invoiceRepository;
         private readonly PullPaymentHostedService _pullPaymentHostedService;
         private readonly WalletHistogramService _walletHistogramService;
 
@@ -109,6 +110,7 @@ namespace BTCPayServer.Controllers
             Dictionary<PaymentMethodId, ICheckoutModelExtension> paymentModelExtensions,
             IStringLocalizer stringLocalizer,
             TransactionLinkProviders transactionLinkProviders,
+            InvoiceRepository invoiceRepository,
             DisplayFormatter displayFormatter)
         {
             _pendingTransactionService = pendingTransactionService;
@@ -118,6 +120,7 @@ namespace BTCPayServer.Controllers
             _handlers = handlers;
             _paymentModelExtensions = paymentModelExtensions;
             _transactionLinkProviders = transactionLinkProviders;
+            _invoiceRepository = invoiceRepository;
             Repository = repo;
             WalletRepository = walletRepository;
             RateFetcher = rateProvider;
@@ -621,6 +624,7 @@ namespace BTCPayServer.Controllers
             var model = new ListTransactionsViewModel { Skip = skip, Count = count };
 
             model.PendingTransactions = await _pendingTransactionService.GetPendingTransactions(walletId.CryptoCode, walletId.StoreId);
+            model.Rates = GetCurrentStore().GetStoreBlob().GetTrackedRates().ToList();
 
             model.Labels.AddRange(
                 (await WalletRepository.GetWalletLabels(walletId))
@@ -654,6 +658,7 @@ namespace BTCPayServer.Controllers
                     vm.Positive = tx.BalanceChange.GetValue(wallet.Network) >= 0;
                     vm.Balance = tx.BalanceChange.ShowMoney(wallet.Network);
                     vm.IsConfirmed = tx.Confirmations != 0;
+                    vm.HistoryLine = tx;
                     // If support isn't possible, we want the user to be able to click so he can see why it doesn't work
                     vm.CanBumpFee =
                         tx.Confirmations == 0 &&
@@ -663,11 +668,35 @@ namespace BTCPayServer.Controllers
                         var labels = _labelService.CreateTransactionTagModels(transactionInfo, Request);
                         vm.Tags.AddRange(labels);
                         vm.Comment = transactionInfo.Comment;
+                        vm.InvoiceId = transactionInfo.Attachments.FirstOrDefault(a => a.Type == WalletObjectData.Types.Invoice)?.Id;
+                        vm.WalletRateBook = transactionInfo.Rates;
                     }
 
                     if (labelFilter == null ||
                         vm.Tags.Any(l => l.Text.Equals(labelFilter, StringComparison.OrdinalIgnoreCase)))
                         model.Transactions.Add(vm);
+                }
+
+                var trackedCurrencies = GetCurrentStore().GetStoreBlob().GetTrackedRates();
+                var rates = await _invoiceRepository.GetRatesOfInvoices(model.Transactions.Select(r => r.InvoiceId).Where(r => r is not null).ToHashSet());
+                foreach (var vm in model.Transactions)
+                {
+                    if (vm.InvoiceId is null)
+                        continue;
+                    rates.TryGetValue(vm.InvoiceId, out var book);
+                    vm.InvoiceRateBook = book;
+                }
+
+                foreach (var vm in model.Transactions)
+                {
+                    var book = vm.InvoiceRateBook ?? new();
+                    if (vm.WalletRateBook is not null)
+                        book.AddRates(vm.WalletRateBook);
+                    foreach (var trackedCurrency in trackedCurrencies)
+                    {
+                        var exists = book.TryGetRate(new CurrencyPair(network.CryptoCode, trackedCurrency), out var rate);
+                        vm.Rates.Add(exists ?  _displayFormatter.Currency(rate, trackedCurrency) : null);
+                    }
                 }
 
                 model.Total = preFiltering ? null : model.Transactions.Count;
@@ -761,6 +790,26 @@ namespace BTCPayServer.Controllers
                     break;
             }
             return RedirectToAction(nameof(WalletReceive), new { walletId, returnUrl = vm.ReturnUrl });
+        }
+
+        [HttpGet("{walletId}/addresses")]
+        public async Task<IActionResult> ReservedAddresses(
+            [ModelBinder(typeof(WalletIdModelBinder))] WalletId walletId)
+        {
+            var paymentMethod = GetDerivationSchemeSettings(walletId);
+            if (paymentMethod == null)
+                return NotFound();
+
+            var labeledAddresses = await WalletRepository.GetReservedAddressesWithDetails(walletId);
+
+            var vm = new ReservedAddressesViewModel
+            {
+                WalletId = walletId.ToString(),
+                CryptoCode = walletId.CryptoCode,
+                Addresses = labeledAddresses
+            };
+
+            return View(vm);
         }
 
         private async Task SendFreeMoney(Cheater cheater, WalletId walletId, DerivationSchemeSettings paymentMethod)
@@ -996,7 +1045,8 @@ namespace BTCPayServer.Controllers
                         Comment = info?.Comment,
                         Labels = _labelService.CreateTransactionTagModels(info, Request),
                         Link = _transactionLinkProviders.GetTransactionLink(pmi, coin.OutPoint.ToString()),
-                        Confirmations = coin.Confirmations
+                        Confirmations = coin.Confirmations,
+                        Timestamp = coin.Timestamp
                     };
                 }).ToArray();
             }
@@ -1478,13 +1528,12 @@ namespace BTCPayServer.Controllers
             var settings = GetDerivationSchemeSettings(walletId);
             if (settings is null)
                 return NotFound();
-            var signingKeySettings = settings.GetSigningAccountKeySettings(extKey);
+            var signingKeySettings = settings.GetAccountKeySettingsFromRoot(extKey);
             if (signingKeySettings is null)
             {
                 // Let's try best effort if RootFingerprint isn't configured, but AccountKeyPath is
                 signingKeySettings = settings.AccountKeySettings
-                                            .Where(a => a.RootFingerprint is null && a.AccountKeyPath is not null)
-                                            .FirstOrDefault();
+                    .FirstOrDefault(a => a.RootFingerprint is null && a.AccountKeyPath is not null);
                 if (signingKeySettings is not null)
                     signingKeySettings.RootFingerprint = extKey.GetPublicKey().GetHDFingerPrint();
             }

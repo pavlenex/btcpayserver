@@ -20,6 +20,7 @@ using BTCPayServer.Lightning;
 using BTCPayServer.Lightning.Charge;
 using BTCPayServer.Lightning.CLightning;
 using BTCPayServer.Lightning.Eclair;
+using BTCPayServer.Lightning.Phoenixd;
 using BTCPayServer.Lightning.LNbank;
 using BTCPayServer.Lightning.LND;
 using BTCPayServer.Lightning.LNDhub;
@@ -138,6 +139,8 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
                 new EclairConnectionStringHandler(client));
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
+                new PhoenixdConnectionStringHandler(client));
+            services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
                 new LndConnectionStringHandler(client));
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
                 new LndHubConnectionStringHandler(client));
@@ -254,6 +257,8 @@ namespace BTCPayServer.Hosting
                                                               $"If you have an eclair server: 'type=eclair;server=http://eclair.com:4570;password=eclairpassword;bitcoin-host=bitcoind:37393;bitcoin-auth=bitcoinrpcuser:bitcoinrpcpassword" +
                                                               Environment.NewLine +
                                                               $"               eclair server: 'type=eclair;server=http://eclair.com:4570;password=eclairpassword;bitcoin-host=bitcoind:37393" +
+                                                              Environment.NewLine +
+                                                              $"If you have a phoenixd server: 'type=phoenixd;server=http://phoenixd:9740/;password=phoenixdpassword'" +
                                                               Environment.NewLine +
                                                               $"Error: {error}" + Environment.NewLine +
                                                               "This service will not be exposed through BTCPay Server");
@@ -388,7 +393,7 @@ namespace BTCPayServer.Hosting
             services.AddReportProvider<OnChainWalletReportProvider>();
             services.AddReportProvider<ProductsReportProvider>();
             services.AddReportProvider<PayoutsReportProvider>();
-            services.AddReportProvider<LegacyInvoiceExportReportProvider>();
+            services.AddReportProvider<InvoicesReportProvider>();
             services.AddReportProvider<RefundsReportProvider>();
             services.AddWebhooks();
 
@@ -430,6 +435,7 @@ o.GetRequiredService<IEnumerable<IPaymentLinkExtension>>().ToDictionary(o => o.P
             services.AddSingleton<IHostedService, AppHubStreamer>();
             services.AddSingleton<IHostedService, AppInventoryUpdaterHostedService>();
             services.AddSingleton<IHostedService, TransactionLabelMarkerHostedService>();
+            services.AddSingleton<IHostedService, OnChainRateTrackerHostedService>();
             services.AddSingleton<IHostedService, UserEventHostedService>();
             services.AddSingleton<IHostedService, DynamicDnsHostedService>();
             services.AddSingleton<PaymentRequestStreamer>();

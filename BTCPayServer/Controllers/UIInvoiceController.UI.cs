@@ -45,6 +45,7 @@ namespace BTCPayServer.Controllers
                 typeof(InvoiceMetadata)
                 .GetProperties()
                 .Select(p => p.Name)
+                .Where(p => p != "ReceiptData")
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             InvoiceAdditionalDataExclude.Remove(nameof(InvoiceMetadata.PosData));
         }
@@ -164,9 +165,9 @@ namespace BTCPayServer.Controllers
             model.StillDue = details.StillDue;
             model.HasRates = details.HasRates;
 
-            if (additionalData.TryGetValue("receiptData", out object? receiptData))
+            if (additionalData.TryGetValue("receiptData", out var receiptData) && receiptData is Dictionary<string, object> data)
             {
-                model.ReceiptData = (Dictionary<string, object>)receiptData;
+                model.ReceiptData = data;
                 additionalData.Remove("receiptData");
             }
 
@@ -1124,7 +1125,7 @@ namespace BTCPayServer.Controllers
             {
                 var appsById = apps.ToDictionary(a => a.Id);
                 var searchTexts = appIds.Select(a => appsById.TryGet(a)).Where(a => a != null)
-                    .Select(a => AppService.GetAppSearchTerm(a.AppType, a.Id))
+                    .Select(a => AppService.GetAppSearchTerm(a!.AppType, a!.Id))
                     .ToList();
                 searchTexts.Add(fs.TextSearch);
                 textSearch = string.Join(' ', searchTexts.Where(t => !string.IsNullOrEmpty(t)).ToList());

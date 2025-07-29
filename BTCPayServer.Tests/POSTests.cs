@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
@@ -12,8 +15,12 @@ using BTCPayServer.Plugins.PointOfSale;
 using BTCPayServer.Plugins.PointOfSale.Controllers;
 using BTCPayServer.Plugins.PointOfSale.Models;
 using BTCPayServer.Services.Apps;
+using BTCPayServer.Views.Stores;
+using LNURL;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Playwright;
+using NBitcoin;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
 using Xunit.Abstractions;
@@ -139,6 +146,138 @@ fruit tea:
             Assert.Throws<ArgumentException>(() => AppService.Parse(duplicateId, true, true));
         }
 
+        [Fact]
+        [Trait("Integration", "Integration")]
+        public async Task CanExportInvoicesWithMetadata()
+        {
+            await using var s = CreatePlaywrightTester();
+            await s.StartAsync();
+            await s.RegisterNewUser();
+            await s.CreateNewStore();
+            var client = await s.AsTestAccount().CreateClient();
+
+            await s.AddDerivationScheme();
+            await s.GoToStore(StoreNavPages.General);
+            await s.Page.SelectOptionAsync("#NetworkFeeMode", "Never");
+            await s.ClickPagePrimary();
+
+
+            var invoiceRepo = s.Server.PayTester.InvoiceRepository;
+            // One expired invoice
+            var expiredInvoiceId = await s.CreateInvoice(amount: 1000m);
+            await invoiceRepo.UpdateInvoiceExpiry(expiredInvoiceId, TimeSpan.Zero);
+            TestLogs.LogInformation($"Expired invoice ID: {expiredInvoiceId}");
+            var newInvoiceId = await s.CreateInvoice(amount: 1000m);
+            TestLogs.LogInformation($"New invoice ID: {newInvoiceId}");
+
+            // One expired invoice with a late payment
+            var expiredLatePaidInvoiceId = await s.CreateInvoice(amount: 1000m);
+            await invoiceRepo.UpdateInvoiceExpiry(expiredLatePaidInvoiceId, TimeSpan.Zero);
+            TestLogs.LogInformation($"Expired late paid invoice ID: {expiredLatePaidInvoiceId}");
+
+            var address = (await client.GetInvoicePaymentMethods(s.StoreId, expiredLatePaidInvoiceId))[0].Destination;
+            await s.Server.ExplorerNode.SendToAddressAsync(BitcoinAddress.Create(address, Network.RegTest), Money.Coins(1.0m));
+
+            // One 0 amount invoice
+            var freeInvoiceId = await s.CreateInvoice(amount: 0m);
+            TestLogs.LogInformation($"Free invoice ID: {freeInvoiceId}");
+
+            // One invoice with two payments
+            var twoPaymentsInvoiceId = await s.CreateInvoice(amount: 5000m);
+            TestLogs.LogInformation($"Invoice with two payments: {twoPaymentsInvoiceId}");
+            await s.GoToInvoiceCheckout(twoPaymentsInvoiceId);
+            await s.PayInvoice(amount: 0.4m, mine: false);
+            await s.PayInvoice(mine: true);
+
+            var expiredLatePaidInvoice = await client.GetInvoice(s.StoreId, expiredLatePaidInvoiceId);
+            Assert.Equal(InvoiceStatus.Expired, expiredLatePaidInvoice.Status);
+            Assert.Equal(InvoiceExceptionStatus.PaidLate, expiredLatePaidInvoice.AdditionalStatus);
+
+            var expiredInvoice = await client.GetInvoice(s.StoreId, expiredInvoiceId);
+            Assert.Equal(InvoiceStatus.Expired, expiredInvoice.Status);
+            Assert.Equal(InvoiceExceptionStatus.None, expiredInvoice.AdditionalStatus);
+
+            await s.GoToStore(s.StoreId);
+            await s.CreateApp("PointOfSale");
+            await s.Page.ClickAsync("label[for='DefaultView_Cart']");
+            await s.Page.FillAsync("#DefaultTaxRate", "10");
+            await s.ClickPagePrimary();
+
+            var o = s.Page.Context.WaitForPageAsync();
+            await s.Page.ClickAsync("#ViewApp");
+            string posInvoiceId;
+            await using (_ = await s.SwitchPage(o))
+            {
+                await s.Page.ClickAsync("#card_rooibos button");
+                await s.Page.ClickAsync("#card_rooibos button");
+
+                await s.Page.ClickAsync("#card_black-tea button");
+
+                await s.Page.ClickAsync("#CartSubmit");
+                await s.PayInvoice(amount: 0.00012m, mine: false);
+                await s.PayInvoice(mine: true);
+                posInvoiceId = s.Page.Url.Split('/').Last();
+            }
+
+            await s.GoToInvoices(s.StoreId);
+            await s.ClickViewReport();
+
+            var csvTxt = await s.DownloadReportCSV();
+            var csvTester = new CSVInvoicesTester(csvTxt);
+            csvTester
+                .ForInvoice(posInvoiceId)
+                .AssertCount(2)
+                .AssertValues(
+                    ("InvoiceExceptionStatus", ""),
+                    ("rooibos-count", "2"),
+                    ("black-tea-count", "1"),
+                    ("total", "3.74"),
+                    ("subTotal", "3.4"),
+                    ("taxIncluded", "0.34"),
+                    ("InvoiceStatus", "Settled"))
+                .SelectPayment(1)
+                .AssertValues(
+                    ("rooibos-count", ""),
+                    ("taxIncluded", ""),
+                    ("InvoiceStatus", ""));
+
+            Assert.DoesNotContain(expiredInvoiceId, csvTxt);
+            Assert.DoesNotContain(newInvoiceId, csvTxt);
+            csvTester
+                .ForInvoice(expiredLatePaidInvoiceId)
+                .AssertCount(1)
+                .AssertValues(
+                    ("InvoiceDue", "-4000.00"),
+                    ("InvoiceExceptionStatus", "PaidLate"),
+                    ("rooibos-count", ""), ("taxIncluded", ""),
+                    ("InvoiceStatus", "Expired"));
+
+            csvTester
+                .ForInvoice(freeInvoiceId)
+                .AssertCount(1)
+                .AssertValues(
+                    ("InvoiceStatus", "Settled"),
+                    ("PaymentAddress", ""),
+                    ("PaymentReceivedDate", ""));
+
+            csvTester
+                .ForInvoice(twoPaymentsInvoiceId)
+                .AssertCount(2)
+                .AssertValues(
+                    ("InvoiceStatus", "Settled"),
+                    ("PaymentMethodId", "BTC-CHAIN"),
+                    ("PaymentCurrency", "BTC"),
+                    ("PaymentAmount", "0.40000000"),
+                    ("PaymentInvoiceAmount", "2000.00"),
+                    ("PaymentRate", "5000"))
+                .SelectPayment(1)
+                .AssertValues(
+                    ("InvoiceStatus", ""),
+                    ("PaymentCurrency", "BTC"),
+                    ("PaymentAmount", "0.60000000"),
+                    ("PaymentRate", "5000"));
+        }
+
         [Fact(Timeout = LongRunningTestTimeout)]
         [Trait("Integration", "Integration")]
         public async Task CanUsePoSApp1()
@@ -172,6 +311,8 @@ orange:
 donation:
   price: 1.02
   custom: true
+goodies:
+  price: 0
 ";
             vmpos.Currency = "EUR";
             vmpos.Template = AppService.SerializeTemplate(MigrationStartupTask.ParsePOSYML(vmpos.Template));
@@ -182,7 +323,7 @@ donation:
 
             Assert.Equal("EUR", vmview.CurrencyCode);
             // apple shouldn't be available since we it's set to "disabled: true" above
-            Assert.Equal(2, vmview.Items.Length);
+            Assert.Equal(3, vmview.Items.Length);
             Assert.Equal("orange", vmview.Items[0].Title);
             Assert.Equal("donation", vmview.Items[1].Title);
             // orange is available
@@ -191,6 +332,14 @@ donation:
             // apple is not found
             Assert.IsType<NotFoundResult>(publicApps
                 .ViewPointOfSale(app.Id, PosViewType.Cart, 0, choiceKey: "apple").Result);
+
+            var redirectToCheckout = Assert.IsType<RedirectToActionResult>(publicApps.ViewPointOfSale(app.Id, PosViewType.Cart, 0, choiceKey: "goodies").Result);
+            Assert.Equal("InvoiceReceipt", redirectToCheckout.ActionName);
+            var invoiceId = redirectToCheckout.RouteValues!["invoiceId"]!.ToString();
+            var client = await user.CreateClient();
+            var inv = await client.GetInvoice(user.StoreId, invoiceId);
+            Assert.Equal(0, inv.Amount);
+            Assert.NotEqual(InvoiceType.TopUp, inv.Type);
 
             // List
             appList = Assert.IsType<ListAppsViewModel>(Assert.IsType<ViewResult>(apps.ListApps(user.StoreId).Result).Model);
@@ -391,9 +540,7 @@ donation:
             Assert.Contains("0,77 €", await s.Page.TextContentAsync("#PaymentDetails-TaxIncluded"));
             Assert.Contains("10,67 €", await s.Page.TextContentAsync("#PaymentDetails-TotalFiat"));
             //
-            // Pay
             await s.PayInvoice(true);
-
 
             // Receipt
             await s.Page.ClickAsync("#ReceiptLink");
@@ -421,7 +568,17 @@ donation:
 
             // Check inventory got updated and is now 3 instead of 5
             await s.GoToUrl(posUrl);
-            Assert.Equal("3 left", await s.Page.TextContentAsync(".posItem:nth-child(3) .badge.inventory"));
+            try
+            {
+                Assert.Equal("3 left".NormalizeWhitespaces(), (await s.Page.TextContentAsync("#card_rooibos .badge")).NormalizeWhitespaces());
+            }
+            catch (Exception)
+            {
+                // Flaky
+                await s.TakeScreenshot("BadInventory.png");
+                throw;
+            }
+
 
             // Guest user can access recent transactions
             await s.GoToHome();
@@ -462,6 +619,112 @@ donation:
                     Assert.False(await s.Page.IsVisibleAsync("#" + ids[i]));
                 }
             }
+        }
+
+        [Fact]
+        [Trait("Playwright", "Playwright")]
+        [Trait("Lightning", "Lightning")]
+        public async Task CanUsePOSProductList()
+        {
+            await using var s = CreatePlaywrightTester();
+            s.Server.ActivateLightning();
+            await s.StartAsync();
+            await s.RegisterNewUser(true);
+            await s.CreateNewStore();
+            await s.AddDerivationScheme();
+            await s.AddLightningNode();
+
+            // Let's check Custom amount works as expected
+            var (_, appId) = await s.CreateApp("PointOfSale");
+            var appUrl = s.Page.Url;
+            await s.Page.FillAsync("#Currency", "BTC");
+            await s.Page.SetCheckedAsync("#ShowCustomAmount", true);
+            await s.ClickPagePrimary();
+
+            var o = s.Page.Context.WaitForPageAsync();
+            await s.Page.ClickAsync("#ViewApp");
+            await using (_ = await s.SwitchPage(o))
+            {
+                await s.Page.FillAsync("#card_herbal-tea [name='amount']", "123");
+                await s.Page.PressAsync("#card_herbal-tea [name='amount']", "Enter");
+
+                await AssertInvoiceAmount(s, "123.00000000 BTC");
+                await s.Page.GoBackAsync();
+
+                await s.Page.FillAsync("#card_custom_amount [name='amount']", "124");
+                await s.Page.PressAsync("#card_custom_amount [name='amount']", "Enter");
+
+                await AssertInvoiceAmount(s, "124.00000000 BTC");
+                await s.Page.GoBackAsync();
+
+                await s.Page.ClickAsync("#card_fruit-tea button");
+                await AssertInvoiceAmount(s, "Any amount");
+            }
+
+            await s.GoToStore();
+            await s.GoToStore(StoreNavPages.Forms);
+            await s.ClickPagePrimary();
+            await s.Page.FillAsync("[name='Name']", "test");
+            await s.Page.ClickAsync("[name='newField1']");
+            await s.Page.SelectOptionAsync("#field-editor-field-type", "number");
+            await s.Page.FillAsync("#field-editor-field-name", "invoice_amount_adjustment");
+            await s.Page.PressAsync("#field-editor-field-name", "Enter");
+            await s.ClickPagePrimary();
+
+            await s.GoToUrl(appUrl);
+            await s.Page.SelectOptionAsync("#FormId", new SelectOptionValue { Label = "test" });
+            await s.ClickPagePrimary();
+            o = s.Page.Context.WaitForPageAsync();
+            await s.Page.ClickAsync("#ViewApp");
+            await using (_ = await s.SwitchPage(o))
+            {
+                await s.Page.ClickAsync("#card_black-tea button");
+                await s.Page.FillAsync("[name='invoice_amount_adjustment']", "0.5");
+                await s.ClickPagePrimary();
+                await AssertInvoiceAmount(s, "1.50000000 BTC");
+            }
+
+            await s.Page.FillAsync("#DefaultTaxRate", "10");
+            await s.ClickPagePrimary();
+
+            await GoToLNUrlCheckout(s, appId, "black-tea");
+            await AssertInvoiceAmount(s, "1.10000000 BTC");
+            await s.MarkAsSettled();
+
+            await s.Page.ClickAsync("#ReceiptLink");
+            await AssertReceipt(s, new()
+            {
+                Items = [
+                    new("BlackTea", "1.00000000 BTC"),
+                ],
+                Sums = [
+                    new("Subtotal", "1.00000000 BTC"),
+                    new("Tax", "0.10000000 BTC (10%)"),
+                    new("Total", "1.10000000 BTC")
+                ]
+            });
+
+            await GoToLNUrlCheckout(s, appId, "fruit-tea");
+            await AssertInvoiceAmount(s, "Any amount");
+
+            await GoToLNUrlCheckout(s, appId, "");
+            await AssertInvoiceAmount(s, "Any amount");
+        }
+
+        private static async Task GoToLNUrlCheckout(PlaywrightTester s, string appId, string item)
+        {
+            var result = await s.Server.PayTester.HttpClient.GetStringAsync($"BTC/lnurl/pay/app/{appId}/{item}");
+            var req = JsonConvert.DeserializeObject<LNURLPayRequest>(result);
+            var invoiceId = Regex.Replace(req.Callback.AbsoluteUri, ".*/pay/i/(.*)", "$1");
+            s.InvoiceId = invoiceId;
+            await s.GoToInvoiceCheckout();
+        }
+
+        private static async Task AssertInvoiceAmount(PlaywrightTester s, string expectedAmount)
+        {
+            var el = await s.Page.WaitForSelectorAsync("#AmountDue");
+            var content = await el!.TextContentAsync();
+            Assert.Equal(expectedAmount.NormalizeWhitespaces(), content.NormalizeWhitespaces());
         }
 
         [Fact]
@@ -525,20 +788,20 @@ donation:
             Assert.Equal("0,56", await s.Page.TextContentAsync("#Amount"));
             Assert.True(await s.Page.IsEnabledAsync("#ModeTablist-discount"));
             Assert.True(await s.Page.IsEnabledAsync("#ModeTablist-tip"));
-            await AssertKeypadCalculation(s, "1.234,00 € + 0,56 € = 1.234,56 €");
+            await AssertKeypadCalculation(s, "1.234,00 € + 0,56 €", "1.234,56 €");
 
             // Discount: 10%
             await s.Page.ClickAsync("label[for='ModeTablist-discount']");
             await EnterKeypad(s, "10");
             Assert.Contains("0,56", await s.Page.TextContentAsync("#Amount"));
             Assert.Contains("10% discount", await s.Page.TextContentAsync("#Discount"));
-            await AssertKeypadCalculation(s, "1.234,00 € + 0,56 € - 123,46 € (10%) = 1.111,10 €");
+            await AssertKeypadCalculation(s, "1.234,00 € + 0,56 € - 123,46 € (10%)", "1.111,10 €");
 
             // Tip: 10%
             await s.Page.ClickAsync("label[for='ModeTablist-tip']");
             await s.Page.ClickAsync("#Tip-10");
             Assert.Contains("0,56", await s.Page.TextContentAsync("#Amount"));
-            await AssertKeypadCalculation(s, "1.234,00 € + 0,56 € - 123,46 € (10%) + 111,11 € (10%) = 1.222,21 €");
+            await AssertKeypadCalculation(s, "1.234,00 € + 0,56 € - 123,46 € (10%) + 111,11 € (10%)", "1.222,21 €");
 
             // Pay
             await s.Page.ClickAsync("#pay-button");
@@ -551,12 +814,10 @@ donation:
             await AssertReceipt(s, new()
             {
                 Items = [
-
                     new("Custom Amount 1", "1 234,00 €"),
                     new("Custom Amount 2", "0,56 €")
                 ],
                 Sums = [
-
                     new("Items total", "1 234,56 €"),
                     new("Discount", "123,46 € (10%)"),
                     new("Subtotal", "1 111,10 €"),
@@ -581,7 +842,7 @@ donation:
 
             await EnterKeypad(s, "123");
             Assert.Contains("1,23", await s.Page.TextContentAsync("#Amount"));
-            await AssertKeypadCalculation(s, "2 x Green Tea (1,00 €) = 2,00 € + 1 x Black Tea (1,00 €) = 1,00 € + 1,23 € + 0,42 € (10%) = 4,65 €");
+            await AssertKeypadCalculation(s, "2 x Green Tea (1,00 €) = 2,00 € + 1 x Black Tea (1,00 €) = 1,00 € + 1,23 € + 0,42 € (10%)", "4,65 €");
 
             // Pay
             await s.Page.ClickAsync("#pay-button");
@@ -609,6 +870,26 @@ donation:
                 ]
             });
 
+            await s.GoToUrl(keypadUrl);
+            await s.Page.ClickAsync("#ItemsListToggle");
+            await s.Page.WaitForSelectorAsync("#PosItems");
+            // This item should be free.
+            await s.Page.ClickAsync("#PosItems .posItem--displayed:nth-child(4) .btn-plus");
+            await s.Page.ClickAsync("#ItemsListOffcanvas button[data-bs-dismiss='offcanvas']");
+            await s.Page.ClickAsync("#pay-button");
+            await s.Page.WaitForSelectorAsync("#ReceiptLinkPrint");
+            await AssertReceipt(s, new()
+            {
+                Items =
+                [
+                    new("Pu Erh (free)", "1 x 0,00 € = 0,00 €")
+                ],
+                Sums =
+                [
+                    new("Total", "0,00 €")
+                ]
+            });
+
             // Guest user can access recent transactions
             await s.GoToHome();
             await s.Logout();
@@ -632,9 +913,10 @@ donation:
             Assert.Contains("1,35 €", await s.Page.TextContentAsync("#PaymentDetails-TotalFiat"));
         }
 
-        private static async Task AssertKeypadCalculation(PlaywrightTester s, string expected)
+        private static async Task AssertKeypadCalculation(PlaywrightTester s, string expectedCalculation, string expectedTotal)
         {
-            Assert.Equal(expected.NormalizeWhitespaces(), (await s.Page.TextContentAsync("#Calculation")).NormalizeWhitespaces());
+            Assert.Equal(expectedCalculation.NormalizeWhitespaces(), (await s.Page.TextContentAsync("#Calculation")).NormalizeWhitespaces());
+            Assert.Equal(("Total: " + expectedTotal).NormalizeWhitespaces(), (await s.Page.TextContentAsync("#Total")).NormalizeWhitespaces());
         }
 
         public class AssertReceiptAssertion
