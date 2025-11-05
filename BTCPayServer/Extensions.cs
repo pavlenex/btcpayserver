@@ -1,6 +1,5 @@
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
@@ -29,7 +28,6 @@ using BTCPayServer.NTag424;
 using BTCPayServer.Payments;
 using BTCPayServer.Payments.Bitcoin;
 using BTCPayServer.Payments.Lightning;
-using BTCPayServer.Payouts;
 using BTCPayServer.Security;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Invoices;
@@ -37,10 +35,10 @@ using BTCPayServer.Services.Reporting;
 using BTCPayServer.Services.Wallets;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NBitcoin;
 using NBitcoin.Payment;
 using NBitcoin.RPC;
@@ -451,7 +449,7 @@ namespace BTCPayServer
         public static IServiceCollection AddScheduledTask<T>(this IServiceCollection services, TimeSpan every)
             where T : class, IPeriodicTask
         {
-            services.AddSingleton<T>();
+            services.TryAddSingleton<T>();
             services.AddTransient<ScheduledTask>(o => new ScheduledTask(typeof(T), every));
             return services;
         }

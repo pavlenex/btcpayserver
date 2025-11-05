@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client;
@@ -17,6 +18,7 @@ using BTCPayServer.Services;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Rates;
 using BTCPayServer.Services.Wallets;
+using BTCPayServer.Tests.PMO;
 using BTCPayServer.Views.Manage;
 using BTCPayServer.Views.Server;
 using BTCPayServer.Views.Stores;
@@ -29,6 +31,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Playwright;
 using static Microsoft.Playwright.Assertions;
 using NBitcoin;
+using NBitcoin.DataEncoders;
 using NBitcoin.Payment;
 using NBXplorer;
 using NBXplorer.Models;
@@ -68,10 +71,7 @@ namespace BTCPayServer.Tests
             await s.InitializeBTCPayServer();
             // Point Of Sale
             var appName = $"PoS-{Guid.NewGuid().ToString()[..21]}";
-            await s.Page.ClickAsync("#StoreNav-CreatePointOfSale");
-            await s.Page.FillAsync("#AppName", appName);
-            await s.ClickPagePrimary();
-            await s.FindAlertMessage(partialText: "App successfully created");
+            await s.CreateApp("PointOfSale", appName);
             await s.Page.SelectOptionAsync("#FormId", "Email");
             await s.ClickPagePrimary();
             await s.FindAlertMessage(partialText: "App updated");
@@ -91,7 +91,7 @@ namespace BTCPayServer.Tests
             await s.GoToUrl($"/invoices/{invoiceId}/");
             Assert.Contains("aa@aa.com", await s.Page.ContentAsync());
             // Payment Request
-            await s.Page.ClickAsync("#StoreNav-PaymentRequests");
+            await s.Page.ClickAsync("#menu-item-PaymentRequests");
             await s.ClickPagePrimary();
             await s.Page.FillAsync("#Title", "Pay123");
             await s.Page.FillAsync("#Amount", "700");
@@ -139,10 +139,11 @@ namespace BTCPayServer.Tests
             await s.GoToHome();
             await s.GoToStore();
             await s.GoToStore(StoreNavPages.Forms);
+            await s.Page.WaitForLoadStateAsync();
             Assert.Contains("Custom Form 1", await s.Page.ContentAsync());
             await s.Page.GetByRole(AriaRole.Link, new() { Name = "Remove" }).ClickAsync();
-            await s.Page.FillAsync("#ConfirmInput", "DELETE");
-            await s.Page.ClickAsync("#ConfirmContinue");
+            await s.ConfirmDeleteModal();
+            await s.Page.WaitForLoadStateAsync();
             Assert.DoesNotContain("Custom Form 1", await s.Page.ContentAsync());
             await s.ClickPagePrimary();
             await s.Page.FillAsync("[name='Name']", "Custom Form 2");
@@ -167,7 +168,7 @@ namespace BTCPayServer.Tests
             await s.ClickPagePrimary();
             await s.GoToStore(StoreNavPages.Forms);
             Assert.Contains("Custom Form 3", await s.Page.ContentAsync());
-            await s.Page.ClickAsync("#StoreNav-PaymentRequests");
+            await s.Page.ClickAsync("#menu-item-PaymentRequests");
             await s.ClickPagePrimary();
             var selectOptions = await s.Page.Locator("#FormId >> option").CountAsync();
             Assert.Equal(4, selectOptions);
@@ -218,6 +219,7 @@ namespace BTCPayServer.Tests
             await s.GoToHome();
             await s.GoToServer(ServerNavPages.Users);
 
+
             // Manage user password reset
             await s.Page.Locator("#SearchTerm").ClearAsync();
             await s.Page.FillAsync("#SearchTerm", user.RegisterDetails.Email);
@@ -231,6 +233,12 @@ namespace BTCPayServer.Tests
             await s.ClickPagePrimary();
             await s.FindAlertMessage(partialText: "Password successfully set");
 
+            var userPage = await s.Browser.NewPageAsync();
+            await using (await s.SwitchPage(userPage, false))
+            {
+                await s.GoToLogin();
+                await s.LogIn(user.Email, user.Password);
+            }
             // Manage user status (disable and enable)
             // Disable user
             await s.Page.Locator("#SearchTerm").ClearAsync();
@@ -242,6 +250,13 @@ namespace BTCPayServer.Tests
             await s.Page.ClickAsync("#UsersList tr.user-overview-row:first-child .disable-user");
             await s.Page.ClickAsync("#ConfirmContinue");
             await s.FindAlertMessage(partialText: "User disabled");
+
+            await using (await s.SwitchPage(userPage, false))
+            {
+                await s.Page.ReloadAsync();
+                await s.FindAlertMessage(StatusMessageModel.StatusSeverity.Warning, partialText: "Your user account is currently disabled");
+            }
+
             //Enable user
             await s.Page.Locator("#SearchTerm").ClearAsync();
             await s.Page.FillAsync("#SearchTerm", user.RegisterDetails.Email);
@@ -252,6 +267,14 @@ namespace BTCPayServer.Tests
             await s.Page.ClickAsync("#UsersList tr.user-overview-row:first-child .enable-user");
             await s.Page.ClickAsync("#ConfirmContinue");
             await s.FindAlertMessage(partialText: "User enabled");
+
+            await using (await s.SwitchPage(userPage))
+            {
+                // Can log again
+                await s.LogIn(user.Email, "Password@1!");
+                await s.CreateNewStore();
+                await s.Logout();
+            }
 
             // Manage user details (edit)
             await s.Page.Locator("#SearchTerm").ClearAsync();
@@ -388,12 +411,16 @@ namespace BTCPayServer.Tests
             Assert.DoesNotContain("You need to configure email settings before this feature works", await s.Page.ContentAsync());
 
             await s.Page.ClickAsync("#CreateEmailRule");
-            await s.Page.Locator("#Trigger").SelectOptionAsync(new[] { "InvoicePaymentSettled" });
-            await s.Page.FillAsync("#To", "test@gmail.com");
-            await s.Page.ClickAsync("#CustomerEmail");
-            await s.Page.FillAsync("#Subject", "Thanks!");
-            await s.Page.Locator(".note-editable").FillAsync("Your invoice is settled");
-            await s.Page.ClickAsync("#SaveEmailRules");
+            var pmo = new EmailRulePMO(s);
+            await pmo.Fill(new()
+                {
+                    Trigger = "WH-InvoicePaymentSettled",
+                    To = "test@gmail.com",
+                    CustomerEmail = true,
+                    Subject = "Thanks!",
+                    Body = "Your invoice is settled"
+                });
+
             await s.FindAlertMessage();
             // we now have a rule
             Assert.DoesNotContain("There are no rules yet.", await s.Page.ContentAsync());
@@ -484,8 +511,7 @@ namespace BTCPayServer.Tests
             //let's test delete user quickly while we're at it
             await s.GoToProfile();
             await s.Page.ClickAsync("#delete-user");
-            await s.Page.FillAsync("#ConfirmInput", "DELETE");
-            await s.Page.ClickAsync("#ConfirmContinue");
+            await s.ConfirmDeleteModal();
             Assert.Contains("/login", s.Page.Url);
         }
 
@@ -557,7 +583,7 @@ namespace BTCPayServer.Tests
             Assert.Equal("Can Use Store?" ,await s.Page.InputValueAsync("#Name"));
             await s.Page.FillAsync("#Name", "Just changed it!");
             await s.Page.ClickAsync("#Create");
-            await s.Page.ClickAsync("#StoreNav-General");
+            await s.GoToStore();
             var newStoreId = await s.Page.InputValueAsync("#Id");
             Assert.NotEqual(newStoreId, s.StoreId);
 
@@ -848,8 +874,7 @@ namespace BTCPayServer.Tests
             await s.GenerateWallet(cryptoCode, "", true);
 
             //let's test quickly the wallet send page
-            await s.Page.ClickAsync($"#StoreNav-Wallet{cryptoCode}");
-            await s.Page.ClickAsync("#WalletNav-Send");
+            await s.GoToWallet(navPages: WalletsNavPages.Send);
             //you cannot use the Sign with NBX option without saving private keys when generating the wallet.
             Assert.DoesNotContain("nbx-seed", await s.Page.ContentAsync());
             Assert.Equal(0, await s.Page.Locator("#GoBack").CountAsync());
@@ -857,7 +882,7 @@ namespace BTCPayServer.Tests
             await s.Page.WaitForSelectorAsync("text=Destination Address field is required");
             Assert.Equal(0, await s.Page.Locator("#GoBack").CountAsync());
             await s.Page.ClickAsync("#CancelWizard");
-            await s.Page.ClickAsync("#WalletNav-Receive");
+            await s.GoToWallet(navPages: WalletsNavPages.Receive);
 
             //generate a receiving address
             await s.Page.WaitForSelectorAsync("#address-tab .qr-container");
@@ -985,6 +1010,16 @@ namespace BTCPayServer.Tests
             var bob = new Key().PubKey.Hash.GetAddress(Network.RegTest);
             await ws.FillAddress(bob);
             await ws.FillAmount(1);
+
+            // Add labels to the transaction output
+            await TestUtils.EventuallyAsync(async () =>
+            {
+                await s.Page.ClickAsync("div.label-manager input");
+                await s.Page.FillAsync("div.label-manager input", "tx-label");
+                await s.Page.Keyboard.PressAsync("Enter");
+                await s.Page.WaitForSelectorAsync("[data-value='tx-label']");
+            });
+
             await ws.Sign();
             // Back button should lead back to the previous page inside the send wizard
             var backUrl = await s.Page.Locator("#GoBack").GetAttributeAsync("href");
@@ -998,9 +1033,10 @@ namespace BTCPayServer.Tests
             await wb.AssertSending(bob, 1.0m);
             await wb.Broadcast();
             Assert.Equal(walletTransactionUri.ToString(), s.Page.Url);
+            // Assert that the added label is associated with the transaction
+            await wt.AssertHasLabels("tx-label");
 
-            await s.Page.ClickAsync($"#StoreNav-Wallet{cryptoCode}");
-            await s.Page.ClickAsync("#WalletNav-Send");
+            await s.GoToWallet(navPages: WalletsNavPages.Send);
 
             var jack = new Key().PubKey.Hash.GetAddress(Network.RegTest);
             await ws.FillAddress(jack);
@@ -1051,7 +1087,7 @@ namespace BTCPayServer.Tests
             Assert.Equal(settingsUri.ToString(), s.Page.Url);
 
             // Once more, test the cancel link of the wallet send page leads back to the previous page
-            await s.Page.ClickAsync("#WalletNav-Send");
+            await s.GoToWallet(navPages: WalletsNavPages.Send);
             cancelUrl = await s.Page.Locator("#CancelWizard").GetAttributeAsync("href");
             Assert.EndsWith(settingsUri.AbsolutePath, cancelUrl);
             // no previous page in the wizard, hence no back button
@@ -1191,7 +1227,7 @@ namespace BTCPayServer.Tests
 
             // Create a payment request
             await s.GoToStore();
-            await s.Page.ClickAsync("#StoreNav-PaymentRequests");
+            await s.Page.ClickAsync("#menu-item-PaymentRequests");
             await s.ClickPagePrimary();
             await s.Page.FillAsync("#Title", "Test Payment Request");
             await s.Page.FillAsync("#Amount", "0.1");
@@ -1233,7 +1269,7 @@ namespace BTCPayServer.Tests
             await s.Page.WaitForLoadStateAsync();
 
             await s.GoToStore();
-            await s.Page.ClickAsync("#StoreNav-PaymentRequests");
+            await s.Page.ClickAsync("#menu-item-PaymentRequests");
             await s.Page.WaitForLoadStateAsync();
 
             var opening2 = s.Page.Context.WaitForPageAsync();
@@ -1249,7 +1285,7 @@ namespace BTCPayServer.Tests
             }
 
             await s.GoToStore();
-            await s.Page.ClickAsync("#StoreNav-PaymentRequests");
+            await s.Page.ClickAsync("#menu-item-PaymentRequests");
             await s.Page.WaitForLoadStateAsync();
 
             var listContent = await s.Page.ContentAsync();
@@ -1310,14 +1346,14 @@ namespace BTCPayServer.Tests
                 Assert.Equal("1", await s.Page.Locator("#NotificationsBadge").TextContentAsync());
             });
 
-            await s.Page.Locator("#NotificationsHandle").ClickAsync();
-            Assert.Matches($"New user {unapproved.RegisterDetails.Email} requires approval", await s.Page.Locator("#NotificationsList .notification").TextContentAsync());
-            await s.Page.Locator("#NotificationsMarkAllAsSeen").ClickAsync();
+            await s.Page.ClickAsync("#NotificationsHandle");
+            await s.Page.Locator($"#NotificationsList .notification:has-text('New user {unapproved.RegisterDetails.Email} requires approval')").WaitForAsync();
+            await s.Page.ClickAsync("#NotificationsMarkAllAsSeen");
 
             await s.GoToServer(ServerNavPages.Policies);
             Assert.True(await s.Page.Locator("#EnableRegistration").IsCheckedAsync());
             Assert.True(await s.Page.Locator("#RequiresUserApproval").IsCheckedAsync());
-            await s.Page.Locator("#RequiresUserApproval").ClickAsync();
+            await s.Page.ClickAsync("#RequiresUserApproval");
             await s.ClickPagePrimary();
             await s.FindAlertMessage(partialText: "Policies updated successfully");
             Assert.False(await s.Page.Locator("#RequiresUserApproval").IsCheckedAsync());
@@ -1390,34 +1426,55 @@ namespace BTCPayServer.Tests
         [Fact]
         public async Task CanSetupEmailRules()
         {
-            await using var s = CreatePlaywrightTester();
+            await using var s = CreatePlaywrightTester(newDb: true);
             await s.StartAsync();
             await s.RegisterNewUser(true);
-            await s.CreateNewStore();
+            var (storeName, _) = await s.CreateNewStore();
 
             await s.GoToStore(StoreNavPages.Emails);
             await s.Page.ClickAsync("#ConfigureEmailRules");
             Assert.Contains("There are no rules yet.", await s.Page.ContentAsync());
             Assert.Contains("You need to configure email settings before this feature works", await s.Page.ContentAsync());
 
+            await s.Page.ClickAsync(".configure-email");
+
+            var mailPMO = new ConfigureEmailPMO(s);
+            await mailPMO.FillMailPit(new()
+            {
+                From = "store@store.com",
+                Login = "store@store.com",
+                Password = "password"
+            });
+
+            await s.GoToStore(StoreNavPages.Emails);
+            await s.Page.ClickAsync("#ConfigureEmailRules");
+
+            var pmo = new EmailRulePMO(s);
             await s.Page.ClickAsync("#CreateEmailRule");
-            await s.Page.SelectOptionAsync("#Trigger", "InvoiceCreated");
-            await s.Page.FillAsync("#To", "invoicecreated@gmail.com");
-            await s.Page.ClickAsync("#CustomerEmail");
-            await s.Page.ClickAsync("#SaveEmailRules");
+
+            await pmo.Fill(new() {
+                Trigger = "WH-InvoiceCreated",
+                To = "invoicecreated@gmail.com",
+                Subject = "Invoice Created in {Invoice.Currency}!",
+                Body = "Invoice has been created in {Invoice.Currency} for {Invoice.Price}!",
+                CustomerEmail = true
+            });
 
             await s.FindAlertMessage();
-            Assert.DoesNotContain("There are no rules yet.", await s.Page.ContentAsync());
-            Assert.Contains("invoicecreated@gmail.com", await s.Page.ContentAsync());
-            Assert.Contains("Invoice {Invoice.Id} created", await s.Page.ContentAsync());
-            Assert.Contains("Yes", await s.Page.ContentAsync());
+            var page = await s.Page.ContentAsync();
+            Assert.DoesNotContain("There are no rules yet.", page);
+            Assert.Contains("invoicecreated@gmail.com", page);
+            Assert.Contains("Invoice Created in {Invoice.Currency}!", page);
+            Assert.Contains("Yes", page);
 
             await s.Page.ClickAsync("#CreateEmailRule");
-            await s.Page.SelectOptionAsync("#Trigger", "PaymentRequestStatusChanged");
-            await s.Page.FillAsync("#To", "statuschanged@gmail.com");
-            await s.Page.FillAsync("#Subject", "Status changed!");
-            await s.Page.Locator(".note-editable").FillAsync("Your Payment Request Status is Changed");
-            await s.Page.ClickAsync("#SaveEmailRules");
+
+            await pmo.Fill(new() {
+                Trigger = "WH-PaymentRequestStatusChanged",
+                To = "statuschanged@gmail.com",
+                Subject = "Status changed!",
+                Body = "Your Payment Request Status is Changed"
+            });
 
             await s.FindAlertMessage();
             Assert.Contains("statuschanged@gmail.com", await s.Page.ContentAsync());
@@ -1427,31 +1484,56 @@ namespace BTCPayServer.Tests
             Assert.True(await editButtons.CountAsync() >= 2);
             await editButtons.Nth(1).ClickAsync();
 
-            await s.Page.Locator("#To").ClearAsync();
-            await s.Page.FillAsync("#To", "changedagain@gmail.com");
-            await s.Page.ClickAsync("#SaveEmailRules");
+            await pmo.Fill(new() {
+                To = "changedagain@gmail.com"
+            });
 
             await s.FindAlertMessage();
             Assert.Contains("changedagain@gmail.com", await s.Page.ContentAsync());
             Assert.DoesNotContain("statuschanged@gmail.com", await s.Page.ContentAsync());
 
+            var rulesUrl = s.Page.Url;
+
+            await s.AddDerivationScheme();
+            await s.GoToInvoices();
+            var sent = await s.Server.WaitForEvent<EmailSentEvent>(() => s.CreateInvoice(amount: 10m, currency: "USD"));
+            var message = await s.Server.AssertHasEmail(sent);
+            Assert.Equal("Invoice has been created in USD for 10!", message.Text);
+
+            await s.GoToUrl(rulesUrl);
             var deleteLinks = s.Page.GetByRole(AriaRole.Link, new() { Name = "Remove" });
             Assert.Equal(2, await deleteLinks.CountAsync());
 
             await deleteLinks.First.ClickAsync();
-            await s.Page.FillAsync("#ConfirmInput", "REMOVE");
-            await s.Page.ClickAsync("#ConfirmContinue");
+            await s.ConfirmDeleteModal();
 
             await s.FindAlertMessage();
             deleteLinks = s.Page.GetByRole(AriaRole.Link, new() { Name = "Remove" });
             Assert.Equal(1, await deleteLinks.CountAsync());
 
             await deleteLinks.First.ClickAsync();
-            await s.Page.FillAsync("#ConfirmInput", "REMOVE");
-            await s.Page.ClickAsync("#ConfirmContinue");
+            await s.ConfirmDeleteModal();
 
             await s.FindAlertMessage();
             Assert.Contains("There are no rules yet.", await s.Page.ContentAsync());
+
+            await s.Page.ClickAsync("#CreateEmailRule");
+
+            await pmo.Fill(new() {
+                Trigger = "WH-InvoiceCreated",
+                To = "invoicecreated@gmail.com",
+                Subject = "Invoice Created in {Invoice.Currency} for {Store.Name}!",
+                Body = "Invoice has been created in {Invoice.Currency} for {Invoice.Price}!",
+                CustomerEmail = true,
+                Condition = "$ ?(@.Invoice.Metadata.buyerEmail == \"john@test.com\")"
+            });
+
+            await s.GoToInvoices();
+            sent = await s.Server.WaitForEvent<EmailSentEvent>(() => s.CreateInvoice(amount: 10m, currency: "USD", refundEmail: "john@test.com"));
+            message = await s.Server.AssertHasEmail(sent);
+            Assert.Equal("Invoice Created in USD for " + storeName + "!", message.Subject);
+            Assert.Equal("Invoice has been created in USD for 10!", message.Text);
+            Assert.Equal("john@test.com", message.To[0].Address);
         }
 
         [Fact]
@@ -1617,7 +1699,7 @@ namespace BTCPayServer.Tests
                 await s.Page.GetAttributeAsync("#AccountKeys_0__AccountKeyPath", "value"));
 
             // Transactions list is empty
-            await s.Page.ClickAsync($"#StoreNav-Wallet{cryptoCode}");
+            await s.GoToWallet();
             await s.Page.WaitForSelectorAsync("#WalletTransactions[data-loaded='true']");
             Assert.Contains("There are no transactions yet", await s.Page.Locator("#WalletTransactions").TextContentAsync());
         }
@@ -1645,8 +1727,7 @@ namespace BTCPayServer.Tests
             Assert.Contains(await passEl.TextContentAsync(), "hellorockstar", StringComparison.OrdinalIgnoreCase);
             await s.Page.ClickAsync("#delete");
             await s.Page.WaitForSelectorAsync("#ConfirmInput");
-            await s.Page.FillAsync("#ConfirmInput", "DELETE");
-            await s.Page.ClickAsync("#ConfirmContinue");
+            await s.ConfirmDeleteModal();
             await s.FindAlertMessage();
             seedEl = s.Page.Locator("#Seed");
             Assert.Contains("Seed removed", await seedEl.TextContentAsync(), StringComparison.OrdinalIgnoreCase);
@@ -1745,7 +1826,7 @@ namespace BTCPayServer.Tests
             ];
 
             await s.Server.ExplorerNode.GenerateAsync(1);
-            await s.GoToWallet(walletId);
+            await s.GoToWallet(walletId, WalletsNavPages.Send);
             await s.Page.ClickAsync("#toggleInputSelection");
 
             var input = s.Page.Locator("input[placeholder^='Filter']");
@@ -1801,11 +1882,11 @@ namespace BTCPayServer.Tests
             (string storeName, _) = await s.CreateNewStore();
 
             // Check status in navigation
-            await s.Page.Locator("#StoreNav-LightningBTC .btcpay-status--pending").WaitForAsync();
+            await s.Page.Locator("#menu-item-LightningSettings-BTC .btcpay-status--pending").WaitForAsync();
 
             // Set up LN node
             await s.AddLightningNode();
-            await s.Page.Locator("#StoreNav-LightningBTC .btcpay-status--enabled").WaitForAsync();
+            await s.Page.Locator("#menu-item-Lightning-BTC .btcpay-status--enabled").WaitForAsync();
 
             // Check public node info for availability
             var opening = s.Page.Context.WaitForPageAsync();
@@ -1831,7 +1912,7 @@ namespace BTCPayServer.Tests
             await s.FindAlertMessage(partialText: "BTC Lightning node updated.");
 
             // Check offline state is communicated in nav item
-            await s.Page.Locator("#StoreNav-LightningBTC .btcpay-status--disabled").WaitForAsync();
+            await s.Page.Locator("#menu-item-Lightning-BTC .btcpay-status--disabled").WaitForAsync();
 
             // Check public node info for availability
             opening = s.Page.Context.WaitForPageAsync();
@@ -1990,6 +2071,371 @@ namespace BTCPayServer.Tests
                 foreach (var p in permissions)
                     Assert.DoesNotContain(p + "<", source);
             }
+        }
+
+        [Fact]
+        public async Task CanUseAwaitProgressForInProgressPayout()
+        {
+            await using var s = CreatePlaywrightTester();
+            await s.StartAsync();
+            await s.RegisterNewUser(true);
+            await s.CreateNewStore();
+            await s.GenerateWallet(isHotWallet: true);
+            await s.FundStoreWallet(denomination: 50.0m);
+
+            await s.GoToStore(s.StoreId, StoreNavPages.PayoutProcessors);
+            await s.Page.ClickAsync("#Configure-BTC-CHAIN");
+            await s.Page.SetCheckedAsync("#ProcessNewPayoutsInstantly", true);
+            await s.ClickPagePrimary();
+
+            await s.GoToStore(s.StoreId, StoreNavPages.PullPayments);
+            await s.ClickPagePrimary();
+            await s.Page.FillAsync("#Name", "PP1");
+            await s.Page.FillAsync("#Amount", "99.0");
+            await s.Page.SetCheckedAsync("#AutoApproveClaims", true);
+            await s.ClickPagePrimary();
+
+            var o = s.Page.Context.WaitForPageAsync();
+            await s.Page.ClickAsync("text=View");
+            var newPage = await o;
+
+            var address = await s.Server.ExplorerNode.GetNewAddressAsync();
+            await newPage.FillAsync("#Destination", address.ToString());
+            await newPage.PressAsync("#Destination", "Enter");
+
+            await s.GoToStore(s.StoreId, StoreNavPages.Payouts);
+            await s.Page.ClickAsync("#InProgress-view");
+
+            // Wait for the payment processor to process the payment
+            await TestUtils.EventuallyAsync(async () =>
+            {
+                await s.Page.ReloadAsync();
+                var massActionSelect = s.Page.Locator(".mass-action-select-all[data-payout-state='InProgress']");
+                await Expect(massActionSelect).ToBeVisibleAsync();
+            });
+
+            await s.Page.ClickAsync(".mass-action-select-all[data-payout-state='InProgress']");
+            await s.Page.ClickAsync("#InProgress-mark-awaiting-payment");
+            await s.Page.ClickAsync("#AwaitingPayment-view");
+
+            var pageContent = await s.Page.ContentAsync();
+            Assert.Contains("PP1", pageContent);
+        }
+
+        [Fact]
+        public async Task CanUseWebhooks()
+        {
+            await using var s = CreatePlaywrightTester();
+            await s.StartAsync();
+            await s.RegisterNewUser(true);
+            await s.CreateNewStore();
+            await s.GoToStore(StoreNavPages.Webhooks);
+
+            TestLogs.LogInformation("Let's create two webhooks");
+            for (var i = 0; i < 2; i++)
+            {
+                await s.ClickPagePrimary();
+                await s.Page.FillAsync("[name='PayloadUrl']", $"http://127.0.0.1/callback{i}");
+                await s.Page.SelectOptionAsync("#Everything", "false");
+                await s.Page.ClickAsync("#InvoiceCreated");
+                await s.Page.ClickAsync("#InvoiceProcessing");
+                await s.ClickPagePrimary();
+            }
+
+            TestLogs.LogInformation("Let's delete one of them");
+            var deleteLinks = await s.Page.Locator("a:has-text('Delete')").AllAsync();
+            Assert.Equal(2, deleteLinks.Count);
+            await deleteLinks[0].ClickAsync();
+            await s.ConfirmDeleteModal();
+            deleteLinks = await s.Page.Locator("a:has-text('Delete')").AllAsync();
+            Assert.Single(deleteLinks);
+            await s.FindAlertMessage();
+
+            TestLogs.LogInformation("Let's try to update one of them");
+            await s.Page.ClickAsync("text=Modify");
+
+            using var server = new FakeServer();
+            await server.Start();
+            await s.Page.FillAsync("[name='PayloadUrl']", server.ServerUri.AbsoluteUri);
+            await s.Page.FillAsync("[name='Secret']", "HelloWorld");
+            await s.Page.ClickAsync("[name='update']");
+            await s.FindAlertMessage();
+            await s.Page.ClickAsync("text=Modify");
+
+            // Check which events are selected
+            var pageContent = await s.Page.ContentAsync();
+            Assert.Contains("value=\"InvoiceProcessing\" checked", pageContent);
+            Assert.Contains("value=\"InvoiceCreated\" checked", pageContent);
+            Assert.DoesNotContain("value=\"InvoiceReceivedPayment\" checked", pageContent);
+
+            await s.Page.ClickAsync("[name='update']");
+            await s.FindAlertMessage();
+            pageContent = await s.Page.ContentAsync();
+            Assert.Contains(server.ServerUri.AbsoluteUri, pageContent);
+
+            TestLogs.LogInformation("Let's see if we can generate an event");
+            await s.GoToStore();
+            await s.AddDerivationScheme();
+            await s.CreateInvoice();
+            var request = await server.GetNextRequest();
+            var headers = request.Request.Headers;
+            var actualSig = headers["BTCPay-Sig"].First();
+            var bytes = await request.Request.Body.ReadBytesAsync((int)headers.ContentLength.Value);
+            var expectedSig =
+                $"sha256={Encoders.Hex.EncodeData(NBitcoin.Crypto.Hashes.HMACSHA256(Encoding.UTF8.GetBytes("HelloWorld"), bytes))}";
+            Assert.Equal(expectedSig, actualSig);
+            request.Response.StatusCode = 200;
+            server.Done();
+
+            TestLogs.LogInformation("Let's make a failed event");
+            var invoiceId = await s.CreateInvoice();
+            request = await server.GetNextRequest();
+            request.Response.StatusCode = 404;
+            server.Done();
+
+            // The delivery is done asynchronously, so small wait here
+            await Task.Delay(500);
+            await s.GoToStore();
+            await s.GoToStore(StoreNavPages.Webhooks);
+            await s.Page.ClickAsync("text=Modify");
+            var redeliverElements = await s.Page.Locator("button.redeliver").AllAsync();
+
+            // One worked, one failed
+            await s.Page.Locator(".icon-cross").WaitForAsync();
+            await s.Page.Locator(".icon-checkmark").WaitForAsync();
+            await redeliverElements[0].ClickAsync();
+
+            await s.FindAlertMessage();
+            request = await server.GetNextRequest();
+            request.Response.StatusCode = 404;
+            server.Done();
+
+            TestLogs.LogInformation("Can we browse the json content?");
+            await CanBrowseContentAsync(s);
+
+            await s.GoToInvoices();
+            await s.Page.ClickAsync($"text={invoiceId}");
+            await CanBrowseContentAsync(s);
+            var redeliverElement = s.Page.Locator("button.redeliver").First;
+            await redeliverElement.ClickAsync();
+
+            await s.FindAlertMessage();
+            request = await server.GetNextRequest();
+            request.Response.StatusCode = 404;
+            server.Done();
+
+            TestLogs.LogInformation("Let's see if we can delete store with some webhooks inside");
+            await s.GoToStore();
+            await s.Page.ClickAsync("#DeleteStore");
+            await s.ConfirmDeleteModal();
+            await s.FindAlertMessage();
+        }
+
+        private static async Task CanBrowseContentAsync(PlaywrightTester s)
+        {
+            var newPageDoing = s.Page.Context.WaitForPageAsync();
+            await s.Page.ClickAsync(".delivery-content");
+            var newPage = await newPageDoing;
+            var bodyText = await newPage.Locator("body").TextContentAsync();
+            JObject.Parse(bodyText);
+            await newPage.CloseAsync();
+        }
+
+        [Fact]
+        [Trait("Playwright", "Playwright")]
+        [Trait("Lightning", "Lightning")]
+        public async Task CanUsePredefinedRoles()
+        {
+            await using var s = CreatePlaywrightTester(newDb: true);
+            s.Server.ActivateLightning();
+            await s.StartAsync();
+            await s.Server.EnsureChannelsSetup();
+            var storeSettingsPaths = new [] {"settings", "rates", "checkout", "tokens", "users", "roles", "webhooks", "payout-processors",
+                "payout-processors/onchain-automated/BTC", "payout-processors/lightning-automated/BTC", "emails/rules", "email-settings", "forms"};
+
+            // Setup users
+            var manager = await s.RegisterNewUser();
+            await s.GoToHome();
+            await s.Logout();
+            await s.GoToRegister();
+            var employee = await s.RegisterNewUser();
+            await s.GoToHome();
+            await s.Logout();
+            await s.GoToRegister();
+            var guest = await s.RegisterNewUser();
+            await s.GoToHome();
+            await s.Logout();
+            await s.GoToRegister();
+
+            // Setup store, wallets and add users
+            await s.RegisterNewUser(true);
+            var (_, storeId) = await s.CreateNewStore();
+            await s.GoToStore();
+            await s.GenerateWallet(isHotWallet: true);
+            await s.AddLightningNode(LightningConnectionType.CLightning, false);
+            await s.AddUserToStore(storeId, manager, "Manager");
+            await s.AddUserToStore(storeId, employee, "Employee");
+            await s.AddUserToStore(storeId, guest, "Guest");
+
+            // Add apps
+            var (_, posId) = await s.CreateApp("PointOfSale");
+            var (_, crowdfundId) = await s.CreateApp("Crowdfund");
+
+            string GetStorePath(string subPath) => $"/stores/{storeId}" + (string.IsNullOrEmpty(subPath) ? "" : $"/{subPath}");
+
+            // Owner access
+            await s.AssertPageAccess(true, GetStorePath(""));
+            await s.AssertPageAccess(true, GetStorePath("reports"));
+            await s.AssertPageAccess(true, GetStorePath("invoices"));
+            await s.AssertPageAccess(true, GetStorePath("invoices/create"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests/edit"));
+            await s.AssertPageAccess(true, GetStorePath("pull-payments"));
+            await s.AssertPageAccess(true, GetStorePath("payouts"));
+            await s.AssertPageAccess(true, GetStorePath("onchain/BTC"));
+            await s.AssertPageAccess(true, GetStorePath("onchain/BTC/settings"));
+            await s.AssertPageAccess(true, GetStorePath("lightning/BTC"));
+            await s.AssertPageAccess(true, GetStorePath("lightning/BTC/settings"));
+            await s.AssertPageAccess(true, GetStorePath("apps/create"));
+            await s.AssertPageAccess(true, $"/apps/{posId}/settings/pos");
+            await s.AssertPageAccess(true, $"/apps/{crowdfundId}/settings/crowdfund");
+            foreach (var path in storeSettingsPaths)
+            {   // should have manage access to settings, hence should see submit buttons or create links
+                s.TestLogs.LogInformation($"Checking access to store page {path} as owner");
+                await s.AssertPageAccess(true, $"/stores/{storeId}/{path}");
+                await s.Page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+                if (path != "payout-processors")
+                {
+                    var saveButton = s.Page.GetByRole(AriaRole.Button, new() { Name = "Save" });
+                    if (await saveButton.CountAsync() > 0)
+                    {
+                        Assert.True(await saveButton.IsVisibleAsync());
+                    }
+                }
+            }
+            await s.Logout();
+
+            // Manager access
+            await s.LogIn(manager);
+            await s.AssertPageAccess(false, GetStorePath(""));
+            await s.AssertPageAccess(true, GetStorePath("reports"));
+            await s.AssertPageAccess(true, GetStorePath("invoices"));
+            await s.AssertPageAccess(true, GetStorePath("invoices/create"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests/edit"));
+            await s.AssertPageAccess(true, GetStorePath("pull-payments"));
+            await s.AssertPageAccess(true, GetStorePath("payouts"));
+            await s.AssertPageAccess(false, GetStorePath("onchain/BTC"));
+            await s.AssertPageAccess(false, GetStorePath("onchain/BTC/settings"));
+            await s.AssertPageAccess(false, GetStorePath("lightning/BTC"));
+            await s.AssertPageAccess(false, GetStorePath("lightning/BTC/settings"));
+            await s.AssertPageAccess(false, GetStorePath("apps/create"));
+            await s.AssertPageAccess(true, $"/apps/{posId}/settings/pos");
+            await s.AssertPageAccess(true, $"/apps/{crowdfundId}/settings/crowdfund");
+            foreach (var path in storeSettingsPaths)
+            {   // should have view access to settings, but no submit buttons or create links
+                s.TestLogs.LogInformation($"Checking access to store page {path} as manager");
+                await s.AssertPageAccess(true, $"/stores/{storeId}/{path}");
+                await s.Page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+                Assert.False(await s.Page.GetByRole(AriaRole.Button, new() { Name = "Save" }).IsVisibleAsync());
+            }
+            await s.Logout();
+
+            // Employee access
+            await s.LogIn(employee);
+            await s.AssertPageAccess(false, GetStorePath(""));
+            await s.AssertPageAccess(false, GetStorePath("reports"));
+            await s.AssertPageAccess(true, GetStorePath("invoices"));
+            await s.AssertPageAccess(true, GetStorePath("invoices/create"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests/edit"));
+            await s.AssertPageAccess(true, GetStorePath("pull-payments"));
+            await s.AssertPageAccess(true, GetStorePath("payouts"));
+            await s.AssertPageAccess(false, GetStorePath("onchain/BTC"));
+            await s.AssertPageAccess(false, GetStorePath("onchain/BTC/settings"));
+            await s.AssertPageAccess(false, GetStorePath("lightning/BTC"));
+            await s.AssertPageAccess(false, GetStorePath("lightning/BTC/settings"));
+            await s.AssertPageAccess(false, GetStorePath("apps/create"));
+            await s.AssertPageAccess(false, $"/apps/{posId}/settings/pos");
+            await s.AssertPageAccess(false, $"/apps/{crowdfundId}/settings/crowdfund");
+            foreach (var path in storeSettingsPaths)
+            {   // should not have access to settings
+                s.TestLogs.LogInformation($"Checking access to store page {path} as employee");
+                await s.AssertPageAccess(false, $"/stores/{storeId}/{path}");
+            }
+            await s.GoToHome();
+            await s.Logout();
+
+            // Guest access
+            await s.LogIn(guest);
+            await s.AssertPageAccess(false, GetStorePath(""));
+            await s.AssertPageAccess(false, GetStorePath("reports"));
+            await s.AssertPageAccess(true, GetStorePath("invoices"));
+            await s.AssertPageAccess(true, GetStorePath("invoices/create"));
+            await s.AssertPageAccess(true, GetStorePath("payment-requests"));
+            await s.AssertPageAccess(false, GetStorePath("payment-requests/edit"));
+            await s.AssertPageAccess(true, GetStorePath("pull-payments"));
+            await s.AssertPageAccess(true, GetStorePath("payouts"));
+            await s.AssertPageAccess(false, GetStorePath("onchain/BTC"));
+            await s.AssertPageAccess(false, GetStorePath("onchain/BTC/settings"));
+            await s.AssertPageAccess(false, GetStorePath("lightning/BTC"));
+            await s.AssertPageAccess(false, GetStorePath("lightning/BTC/settings"));
+            await s.AssertPageAccess(false, GetStorePath("apps/create"));
+            await s.AssertPageAccess(false, $"/apps/{posId}/settings/pos");
+            await s.AssertPageAccess(false, $"/apps/{crowdfundId}/settings/crowdfund");
+            foreach (var path in storeSettingsPaths)
+            {   // should not have access to settings
+                s.TestLogs.LogInformation($"Checking access to store page {path} as guest");
+                await s.AssertPageAccess(false, $"/stores/{storeId}/{path}");
+            }
+            await s.GoToHome();
+            await s.Logout();
+        }
+
+        [Fact]
+        public async Task CanUsePairing()
+        {
+            await using var s = CreatePlaywrightTester();
+            await s.StartAsync();
+            await s.Page.GotoAsync(s.Link("/api-access-request"));
+            Assert.Contains("ReturnUrl", s.Page.Url);
+            await s.GoToRegister();
+            await s.RegisterNewUser();
+            await s.CreateNewStore();
+            await s.AddDerivationScheme();
+
+            await s.GoToStore(s.StoreId, StoreNavPages.Tokens);
+            await s.Page.Locator("#CreateNewToken").ClickAsync();
+            await s.ClickPagePrimary();
+            var url = s.Page.Url;
+            var pairingCode = System.Text.RegularExpressions.Regex.Match(new Uri(url, UriKind.Absolute).Query, "pairingCode=([^&]*)").Groups[1].Value;
+
+            await s.ClickPagePrimary();
+            await s.FindAlertMessage();
+            Assert.Contains(pairingCode, await s.Page.ContentAsync());
+
+            var client = new NBitpayClient.Bitpay(new NBitcoin.Key(), s.ServerUri);
+            await client.AuthorizeClient(new NBitpayClient.PairingCode(pairingCode));
+            await client.CreateInvoiceAsync(
+                new NBitpayClient.Invoice() { Price = 1.000000012m, Currency = "USD", FullNotifications = true },
+                NBitpayClient.Facade.Merchant);
+
+            client = new NBitpayClient.Bitpay(new NBitcoin.Key(), s.ServerUri);
+
+            var code = await client.RequestClientAuthorizationAsync("hehe", NBitpayClient.Facade.Merchant);
+            await s.Page.GotoAsync(code.CreateLink(s.ServerUri).ToString());
+            await s.ClickPagePrimary();
+
+            await client.CreateInvoiceAsync(
+                new NBitpayClient.Invoice() { Price = 1.000000012m, Currency = "USD", FullNotifications = true },
+                NBitpayClient.Facade.Merchant);
+
+            await s.Page.GotoAsync(s.Link("/api-tokens"));
+            await s.ClickPagePrimary(); // Request
+            await s.ClickPagePrimary(); // Approve
+            var url2 = s.Page.Url;
+            var pairingCode2 = System.Text.RegularExpressions.Regex.Match(new Uri(url2, UriKind.Absolute).Query, "pairingCode=([^&]*)").Groups[1].Value;
+            Assert.False(string.IsNullOrEmpty(pairingCode2));
         }
 
     }

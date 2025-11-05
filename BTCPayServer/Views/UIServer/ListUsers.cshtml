@@ -1,8 +1,8 @@
-@using BTCPayServer.Abstractions.Models
 @inject BTCPayServer.Security.ContentSecurityPolicies Csp
 @model UsersViewModel
 @{
-    ViewData.SetActivePage(ServerNavPages.Users, StringLocalizer["Users"]);
+    ViewData.SetLayoutModel(new LayoutModel(nameof(ServerNavPages.Users), StringLocalizer["Users"])
+        .SetCategory(WellKnownCategories.Server));
     var nextUserEmailSortOrder = (string)ViewData["NextUserEmailSortOrder"];
     var userEmailSortOrder = nextUserEmailSortOrder switch
     {
@@ -166,5 +166,5 @@
 
 <vc:pager view-model="Model"></vc:pager>
 
-<partial name="_Confirm" model="@(new ConfirmModel("Send verification email", $"This will send a verification email to the user.", "Send"))" />
+<partial name="_Confirm" model="@(new ConfirmModel(StringLocalizer["Send verification email"], StringLocalizer["This will send a verification email to the user."], StringLocalizer["Send"]))" />
 <partial name="ShowQR" />

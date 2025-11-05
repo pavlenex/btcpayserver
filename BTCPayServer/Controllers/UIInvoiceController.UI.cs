@@ -20,6 +20,7 @@ using BTCPayServer.Models.PaymentRequestViewModels;
 using BTCPayServer.Payments;
 using BTCPayServer.Payments.Lightning;
 using BTCPayServer.Payouts;
+using BTCPayServer.Plugins.Webhooks.Views;
 using BTCPayServer.Rating;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
@@ -95,7 +96,7 @@ namespace BTCPayServer.Controllers
         }
 
         [HttpGet("invoices/{invoiceId}")]
-        [HttpGet("/stores/{storeId}/invoices/${invoiceId}")]
+        [HttpGet("/stores/{storeId}/invoices/{invoiceId}")]
         [Authorize(Policy = Policies.CanViewInvoices, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
         public async Task<IActionResult> Invoice(string invoiceId)
         {
@@ -154,7 +155,7 @@ namespace BTCPayServer.Controllers
                 ShowCheckout = invoice.Status == InvoiceStatus.New,
                 ShowReceipt = invoice.Status == InvoiceStatus.Settled && (invoice.ReceiptOptions?.Enabled ?? receipt.Enabled is true),
                 Deliveries = (await _InvoiceRepository.GetWebhookDeliveries(invoiceId))
-                                    .Select(c => new Models.StoreViewModels.DeliveryViewModel(c))
+                                    .Select(c => new DeliveryViewModel(c))
                                     .ToList()
             };
 
@@ -837,13 +838,7 @@ namespace BTCPayServer.Controllers
             lang ??= storeBlob.DefaultLang;
 
             var receiptEnabled = InvoiceDataBase.ReceiptOptions.Merge(storeBlob.ReceiptOptions, invoice.ReceiptOptions).Enabled is true;
-            var receiptUrl = receiptEnabled ? _linkGenerator.GetUriByAction(
-                nameof(InvoiceReceipt),
-                "UIInvoice",
-                new { invoiceId },
-                Request.Scheme,
-                Request.Host,
-                Request.PathBase) : null;
+            var receiptUrl = receiptEnabled ? _linkGenerator.ReceiptLink(invoiceId, Request.GetRequestBaseUrl()) : null;
 
             var orderId = invoice.Metadata.OrderId;
             var supportUrl = !string.IsNullOrEmpty(storeBlob.StoreSupportUrl)

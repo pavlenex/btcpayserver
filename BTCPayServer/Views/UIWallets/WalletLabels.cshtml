@@ -1,8 +1,9 @@
-@using BTCPayServer.Abstractions.Models
 @model WalletLabelsModel
 @{
     var walletId = Context.GetRouteValue("walletId").ToString();
-    ViewData.SetActivePage(WalletsNavPages.Settings, StringLocalizer["{0} Wallet Labels", Model.WalletId.CryptoCode], walletId);
+    var cryptoCode = Model.WalletId.CryptoCode;
+    ViewData.SetLayoutModel(new LayoutModel($"{nameof(WalletsNavPages.Settings)}-{cryptoCode}", StringLocalizer["{0} Wallet Labels", Model.WalletId.CryptoCode])
+        .SetCategory(WellKnownCategories.ForWallet(cryptoCode)));
 }
 
 @section PageFootContent {
@@ -49,7 +50,7 @@
             </tbody>
         </table>
     </div>
-    <partial name="_Confirm" model="@(new ConfirmModel(StringLocalizer["Remove label"], StringLocalizer["This label will be removed from this wallet and its associated transactions."], StringLocalizer["Remove"]))" />
+    <partial name="_Confirm" model="@(new ConfirmModel(StringLocalizer["Remove label"], StringLocalizer["This label will be removed from this wallet and its associated transactions."], StringLocalizer["Delete"]))" />
 }
 else
 {

@@ -24,6 +24,7 @@ namespace BTCPayServer.Services
         private readonly FileService _fileService;
         private readonly EventAggregator _eventAggregator;
         private readonly ApplicationDbContextFactory _applicationDbContextFactory;
+        private readonly BTCPayServerSecurityStampValidator.DisabledUsers _disabledUsers;
         private readonly ILogger<UserService> _logger;
 
         public UserService(
@@ -32,6 +33,7 @@ namespace BTCPayServer.Services
             FileService fileService,
             EventAggregator eventAggregator,
             ApplicationDbContextFactory applicationDbContextFactory,
+            BTCPayServerSecurityStampValidator.DisabledUsers disabledUsers,
             ILogger<UserService> logger)
         {
             _serviceProvider = serviceProvider;
@@ -39,6 +41,7 @@ namespace BTCPayServer.Services
             _fileService = fileService;
             _eventAggregator = eventAggregator;
             _applicationDbContextFactory = applicationDbContextFactory;
+            _disabledUsers = disabledUsers;
             _logger = logger;
         }
 
@@ -94,7 +97,7 @@ namespace BTCPayServer.Services
         {
             return user.Approved || !user.RequiresApproval;
         }
-        
+
         public static bool TryCanLogin([NotNullWhen(true)] ApplicationUser? user, [MaybeNullWhen(true)] out string error)
         {
             error = null;
@@ -120,7 +123,7 @@ namespace BTCPayServer.Services
             }
             return true;
         }
-        
+
         public async Task<bool> SetUserApproval(string userId, bool approved, string loginLink)
         {
             using var scope = _serviceProvider.CreateScope();
@@ -130,7 +133,7 @@ namespace BTCPayServer.Services
             {
                 return false;
             }
-            
+
             user.Approved = approved;
             var succeeded = await userManager.UpdateAsync(user) is { Succeeded: true };
             if (succeeded)
@@ -145,22 +148,29 @@ namespace BTCPayServer.Services
 
             return succeeded;
         }
-        
-        public async Task<bool?> ToggleUser(string userId, DateTimeOffset? lockedOutDeadline)
+
+        public async Task<bool> SetDisabled(string userId, bool disabled)
         {
             using var scope = _serviceProvider.CreateScope();
             var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
             var user = await userManager.FindByIdAsync(userId);
-            if (user is null)
-            {
-                return null;
-            }
-            if (lockedOutDeadline is not null)
-            {
+            if (user is null || disabled == user.IsDisabled)
+                return true;
+            if (!user.LockoutEnabled)
                 await userManager.SetLockoutEnabledAsync(user, true);
-            }
 
+            var lockedOutDeadline = disabled ? DateTimeOffset.MaxValue : (DateTimeOffset?)null;
             var res = await userManager.SetLockoutEndDateAsync(user, lockedOutDeadline);
+            // Without this, the user won't be logged out automatically when his authentication ticket expires
+            if (disabled)
+            {
+                await userManager.UpdateSecurityStampAsync(user);
+                _disabledUsers.Add(userId);
+            }
+            else
+            {
+                _disabledUsers.Remove(userId);
+            }
             if (res.Succeeded)
             {
                 _logger.LogInformation("User {Email} is now {Status}", user.Email, (lockedOutDeadline is null ? "unlocked" : "locked"));
@@ -169,9 +179,12 @@ namespace BTCPayServer.Services
             {
                 _logger.LogError("Failed to set lockout for user {Email}", user.Email);
             }
-
             return res.Succeeded;
         }
+
+        [Obsolete("Use SetDisabled instead")]
+        public async Task<bool?> ToggleUser(string userId, DateTimeOffset? lockedOutDeadline)
+            => await SetDisabled(userId, lockedOutDeadline is not null);
 
         public async Task<bool> IsAdminUser(ApplicationUser user)
         {
