@@ -25,7 +25,7 @@ using BTCPayServer.Rating;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Invoices;
-using BTCPayServer.Services.Mails;
+using BTCPayServer.Plugins.Emails.Services;
 using BTCPayServer.Services.Notifications;
 using BTCPayServer.Services.Notifications.Blobs;
 using BTCPayServer.Services.Stores;
@@ -1782,31 +1782,14 @@ namespace BTCPayServer.Tests
             Assert.True(archivableStore.Archived);
         }
 
-        private async Task<GreenfieldValidationException> AssertValidationError(string[] fields, Func<Task> act)
-        {
-            var remainingFields = fields.ToHashSet();
-            var ex = await Assert.ThrowsAsync<GreenfieldValidationException>(act);
-            foreach (var field in fields)
-            {
-                Assert.Contains(field, ex.ValidationErrors.Select(e => e.Path).ToArray());
-                remainingFields.Remove(field);
-            }
-            Assert.Empty(remainingFields);
-            return ex;
-        }
+        private Task<GreenfieldValidationException> AssertValidationError(string[] fields, Func<Task> act)
+            => AssertEx.AssertValidationError(fields, act);
 
-        private async Task AssertHttpError(int code, Func<Task> act)
-        {
-            var ex = await Assert.ThrowsAsync<GreenfieldAPIException>(act);
-            Assert.Equal(code, ex.HttpCode);
-        }
+        private Task AssertHttpError(int code, Func<Task> act)
+            => AssertEx.AssertHttpError(code, act);
 
-        private async Task AssertApiError(int httpStatus, string errorCode, Func<Task> act)
-        {
-            var ex = await Assert.ThrowsAsync<GreenfieldAPIException>(act);
-            Assert.Equal(httpStatus, ex.HttpCode);
-            Assert.Equal(errorCode, ex.APIError.Code);
-        }
+        private Task AssertApiError(int httpStatus, string errorCode, Func<Task> act)
+            => AssertEx.AssertApiError(httpStatus, errorCode, act);
 
         [Fact(Timeout = TestTimeout)]
         [Trait("Integration", "Integration")]
@@ -3245,33 +3228,23 @@ namespace BTCPayServer.Tests
             var unrestricted = await user.CreateClient(Policies.Unrestricted);
             var store1 = await unrestricted.CreateStore(new CreateStoreRequest { Name = "Store A" });
             await tester.PayTester.GetService<NotificationSender>()
-                .SendNotification(new UserScope(user.UserId), new InviteAcceptedNotification{
-                    UserId = user.UserId,
-                    UserEmail = user.Email,
-                    StoreId = store1.Id,
-                    StoreName = store1.Name
-                });
+                .SendNotification(new UserScope(user.UserId), new InvoiceEventNotification("aaaaaaaa", InvoiceEvent.Confirmed, store1.Id));
             notifications = (await client.GetNotifications()).ToList();
             Assert.Single(notifications);
 
             notification = notifications.First();
             Assert.Equal(store1.Id, notification.StoreId);
-            Assert.Equal($"User {user.Email} accepted the invite to {store1.Name}.", notification.Body);
+            Assert.Equal($"Invoice aaaaa.. is settled", notification.Body);
 
             var store2 = await unrestricted.CreateStore(new CreateStoreRequest { Name = "Store B" });
             await tester.PayTester.GetService<NotificationSender>()
-                .SendNotification(new UserScope(user.UserId), new InviteAcceptedNotification{
-                    UserId = user.UserId,
-                    UserEmail = user.Email,
-                    StoreId = store2.Id,
-                    StoreName = store2.Name
-                });
+                .SendNotification(new UserScope(user.UserId), new InvoiceEventNotification("baaaaaaa", InvoiceEvent.Confirmed, store2.Id));
             notifications = (await client.GetNotifications(storeId: [store2.Id])).ToList();
             Assert.Single(notifications);
 
             notification = notifications.First();
             Assert.Equal(store2.Id, notification.StoreId);
-            Assert.Equal($"User {user.Email} accepted the invite to {store2.Name}.", notification.Body);
+            Assert.Equal($"Invoice baaaa.. is settled", notification.Body);
 
             Assert.Equal(2, (await client.GetNotifications(storeId: [store1.Id, store2.Id])).Count());
             Assert.Equal(2, (await client.GetNotifications()).Count());
@@ -3280,25 +3253,25 @@ namespace BTCPayServer.Tests
             var settings = await client.GetNotificationSettings();
             Assert.True(settings.Notifications.Find(n => n.Identifier == "newversion").Enabled);
             Assert.True(settings.Notifications.Find(n => n.Identifier == "pluginupdate").Enabled);
-            Assert.True(settings.Notifications.Find(n => n.Identifier == "inviteaccepted").Enabled);
+            Assert.True(settings.Notifications.Find(n => n.Identifier == "invoicestate").Enabled);
 
             var request = new UpdateNotificationSettingsRequest { Disabled = ["newversion", "pluginupdate"] };
             settings = await client.UpdateNotificationSettings(request);
             Assert.False(settings.Notifications.Find(n => n.Identifier == "newversion").Enabled);
             Assert.False(settings.Notifications.Find(n => n.Identifier == "pluginupdate").Enabled);
-            Assert.True(settings.Notifications.Find(n => n.Identifier == "inviteaccepted").Enabled);
+            Assert.True(settings.Notifications.Find(n => n.Identifier == "invoicestate").Enabled);
 
             request = new UpdateNotificationSettingsRequest { Disabled = ["all"] };
             settings = await client.UpdateNotificationSettings(request);
             Assert.False(settings.Notifications.Find(n => n.Identifier == "newversion").Enabled);
             Assert.False(settings.Notifications.Find(n => n.Identifier == "pluginupdate").Enabled);
-            Assert.False(settings.Notifications.Find(n => n.Identifier == "inviteaccepted").Enabled);
+            Assert.False(settings.Notifications.Find(n => n.Identifier == "invoicestate").Enabled);
 
             request = new UpdateNotificationSettingsRequest { Disabled = [] };
             settings = await client.UpdateNotificationSettings(request);
             Assert.True(settings.Notifications.Find(n => n.Identifier == "newversion").Enabled);
             Assert.True(settings.Notifications.Find(n => n.Identifier == "pluginupdate").Enabled);
-            Assert.True(settings.Notifications.Find(n => n.Identifier == "inviteaccepted").Enabled);
+            Assert.True(settings.Notifications.Find(n => n.Identifier == "invoicestate").Enabled);
         }
 
         [Fact(Timeout = TestTimeout)]
@@ -4118,94 +4091,6 @@ namespace BTCPayServer.Tests
             await AssertPermissionError(Policies.CanModifyStoreSettings, async () => await client.RemoveStoreUser(user.StoreId, user.UserId));
 
             await AssertAPIError("store-user-role-orphaned", async () => await employeeClient.RemoveStoreUser(user.StoreId, employee.UserId));
-        }
-
-        [Fact(Timeout = TestTimeout)]
-        [Trait("Integration", "Integration")]
-        public async Task ServerEmailTests()
-        {
-            using var tester = CreateServerTester();
-            await tester.StartAsync();
-            var admin = tester.NewAccount();
-            await admin.GrantAccessAsync(true);
-            var adminClient = await admin.CreateClient(Policies.Unrestricted);
-            // validate that clear email settings will not throw an error
-            await adminClient.UpdateServerEmailSettings(new ServerEmailSettingsData());
-
-            var data = new ServerEmailSettingsData
-            {
-                From = "admin@admin.com",
-                Login = "admin@admin.com",
-                Password = "admin@admin.com",
-                Port = 1234,
-                Server = "admin.com",
-                EnableStoresToUseServerEmailSettings = false
-            };
-            var actualUpdated = await adminClient.UpdateServerEmailSettings(data);
-
-            var finalEmailSettings = await adminClient.GetServerEmailSettings();
-            // email password is masked and not returned from the server once set
-            data.Password = null;
-            data.PasswordSet = true;
-
-            Assert.Equal(JsonConvert.SerializeObject(finalEmailSettings), JsonConvert.SerializeObject(data));
-            Assert.Equal(JsonConvert.SerializeObject(finalEmailSettings), JsonConvert.SerializeObject(actualUpdated));
-
-            // check that email validation works
-            await AssertValidationError(new[] { nameof(EmailSettingsData.From) },
-                async () => await adminClient.UpdateServerEmailSettings(new ServerEmailSettingsData
-                {
-                    From = "invalid"
-                }));
-
-            // NOTE: This email test fails silently in EmailSender.cs#31, can't test, but leaving for the future as reminder
-            //await adminClient.SendEmail(admin.StoreId,
-            //    new SendEmailRequest { Body = "lol", Subject = "subj", Email = "to@example.org" });
-
-            // check that clear server email settings works
-            await adminClient.UpdateServerEmailSettings(new ServerEmailSettingsData());
-            var clearedSettings = await adminClient.GetServerEmailSettings();
-            Assert.Equal(JsonConvert.SerializeObject(new ServerEmailSettingsData { PasswordSet = false }), JsonConvert.SerializeObject(clearedSettings));
-        }
-
-        [Fact(Timeout = 60 * 2 * 1000)]
-        [Trait("Integration", "Integration")]
-        public async Task StoreEmailTests()
-        {
-            using var tester = CreateServerTester();
-            await tester.StartAsync();
-            var admin = tester.NewAccount();
-            await admin.GrantAccessAsync(true);
-            var adminClient = await admin.CreateClient(Policies.Unrestricted);
-            // validate that clear email settings will not throw an error
-            await adminClient.UpdateStoreEmailSettings(admin.StoreId, new EmailSettingsData());
-
-            var data = new EmailSettingsData
-            {
-                From = "admin@admin.com",
-                Login = "admin@admin.com",
-                Password = "admin@admin.com",
-                Port = 1234,
-                Server = "admin.com",
-            };
-            await adminClient.UpdateStoreEmailSettings(admin.StoreId, data);
-            var s = await adminClient.GetStoreEmailSettings(admin.StoreId);
-            // email password is masked and not returned from the server once set
-            data.Password = null;
-            data.PasswordSet = true;
-            Assert.Equal(JsonConvert.SerializeObject(s), JsonConvert.SerializeObject(data));
-            await AssertValidationError(new[] { nameof(EmailSettingsData.From) },
-                async () => await adminClient.UpdateStoreEmailSettings(admin.StoreId,
-                    new EmailSettingsData { From = "invalid" }));
-
-            // send test email
-            await adminClient.SendEmail(admin.StoreId,
-                new SendEmailRequest { Body = "lol", Subject = "subj", Email = "to@example.org" });
-
-            // clear store email settings
-            await adminClient.UpdateStoreEmailSettings(admin.StoreId, new EmailSettingsData());
-            var clearedSettings = await adminClient.GetStoreEmailSettings(admin.StoreId);
-            Assert.Equal(JsonConvert.SerializeObject(new EmailSettingsData { PasswordSet = false }), JsonConvert.SerializeObject(clearedSettings));
         }
 
         [Fact(Timeout = 60 * 2 * 1000)]

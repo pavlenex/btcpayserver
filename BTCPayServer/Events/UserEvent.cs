@@ -16,22 +16,24 @@ public class UserEvent(ApplicationUser user)
             return $"{base.ToString()} has been deleted";
         }
     }
-    public class InviteAccepted(ApplicationUser user, string storeUsersLink) : UserEvent(user)
-    {
-        public string StoreUsersLink { get; set; } = storeUsersLink;
-    }
     public class PasswordResetRequested(ApplicationUser user, string resetLink) : UserEvent(user)
     {
         public string ResetLink { get; } = resetLink;
     }
+
+    public class ConfirmationEmailRequested(ApplicationUser user, string confirmLink) : UserEvent(user)
+    {
+        public string ConfirmLink { get; } = confirmLink;
+    }
+
     public class Registered(ApplicationUser user, string approvalLink, string confirmationEmail) : UserEvent(user)
     {
         public string ApprovalLink { get; } = approvalLink;
 		public string ConfirmationEmailLink { get; set; } = confirmationEmail;
-		public static async Task<Registered> Create(ApplicationUser user, CallbackGenerator callbackGenerator, HttpRequest request)
+		public static async Task<Registered> Create(ApplicationUser user, CallbackGenerator callbackGenerator)
 		{
-			var approvalLink = callbackGenerator.ForApproval(user, request);
-			var confirmationEmail = await callbackGenerator.ForEmailConfirmation(user, request);
+			var approvalLink = callbackGenerator.ForApproval(user);
+			var confirmationEmail = await callbackGenerator.ForEmailConfirmation(user);
 			return new Registered(user, approvalLink, confirmationEmail);
 		}
 	}
@@ -41,11 +43,11 @@ public class UserEvent(ApplicationUser user)
         public ApplicationUser InvitedByUser { get; } = invitedBy;
         public string InvitationLink { get; } = invitationLink;
 
-        public static async Task<Invited> Create(ApplicationUser user, ApplicationUser currentUser, CallbackGenerator callbackGenerator, HttpRequest request, bool sendEmail)
+        public static async Task<Invited> Create(ApplicationUser user, ApplicationUser currentUser, CallbackGenerator callbackGenerator, bool sendEmail)
         {
-			var invitationLink = await callbackGenerator.ForInvitation(user, request);
-			var approvalLink = callbackGenerator.ForApproval(user, request);
-			var confirmationEmail = await callbackGenerator.ForEmailConfirmation(user, request);
+			var invitationLink = await callbackGenerator.ForInvitation(user);
+			var approvalLink = callbackGenerator.ForApproval(user);
+			var confirmationEmail = await callbackGenerator.ForEmailConfirmation(user);
 			return new Invited(user, currentUser, invitationLink, approvalLink, confirmationEmail)
             {
                 SendInvitationEmail = sendEmail

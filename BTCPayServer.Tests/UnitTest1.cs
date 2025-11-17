@@ -46,7 +46,7 @@ using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Labels;
-using BTCPayServer.Services.Mails;
+using BTCPayServer.Plugins.Emails.Services;
 using BTCPayServer.Services.Notifications;
 using BTCPayServer.Services.Rates;
 using BTCPayServer.Storage.Models;
@@ -86,7 +86,7 @@ namespace BTCPayServer.Tests
     [Collection(nameof(NonParallelizableCollectionDefinition))]
     public class UnitTest1 : UnitTestBase
     {
-        public const int LongRunningTestTimeout = 60_000; // 60s
+        public const int LongRunningTestTimeout = TestUtils.LongRunningTestTimeout;
 
         public UnitTest1(ITestOutputHelper helper) : base(helper)
         {
@@ -1601,7 +1601,7 @@ namespace BTCPayServer.Tests
         }
 
         [Fact]
-        [Trait("UnitTest", "UnitTest")]
+        [Trait("FastTest", "FastTest")]
         public void TestMailTemplate()
         {
             var template = new TextTemplate("Hello mister {Name.Firstname} {Name.Lastname} !");
@@ -1639,7 +1639,7 @@ namespace BTCPayServer.Tests
                 }
             };
             result = template.Render(model);
-            Assert.Equal("Hello mister John <NotFound(Name.Lastname)> !", result);
+            Assert.Equal("Hello mister John [NotFound(Name.Lastname)] !", result);
 
             // Is Case insensitive
             model = new()
@@ -1650,7 +1650,7 @@ namespace BTCPayServer.Tests
                 }
             };
             result = template.Render(model);
-            Assert.Equal("Hello mister John <NotFound(Name.Lastname)> !", result);
+            Assert.Equal("Hello mister John [NotFound(Name.Lastname)] !", result);
 
             model = new()
             {
@@ -3317,61 +3317,6 @@ namespace BTCPayServer.Tests
             var settings = tester.PayTester.GetService<SettingsRepository>();
             await settings.UpdateSetting<MigrationSettings>(new MigrationSettings());
             await tester.PayTester.RestartStartupTask<MigrationStartupTask>();
-        }
-
-        [Fact(Timeout = LongRunningTestTimeout)]
-        [Trait("Integration", "Integration")]
-        public async Task EmailSenderTests()
-        {
-            using var tester = CreateServerTester(newDb: true);
-            await tester.StartAsync();
-
-            var acc = tester.NewAccount();
-            await acc.GrantAccessAsync(true);
-
-            var settings = tester.PayTester.GetService<SettingsRepository>();
-            var emailSenderFactory = tester.PayTester.GetService<EmailSenderFactory>();
-
-            Assert.Null(await Assert.IsType<ServerEmailSender>(await emailSenderFactory.GetEmailSender()).GetEmailSettings());
-            Assert.Null(await Assert.IsType<StoreEmailSender>(await emailSenderFactory.GetEmailSender(acc.StoreId)).GetEmailSettings());
-
-
-            await settings.UpdateSetting(new PoliciesSettings() { DisableStoresToUseServerEmailSettings = false });
-            await settings.UpdateSetting(new EmailSettings()
-            {
-                From = "admin@admin.com",
-                Login = "admin@admin.com",
-                Password = "admin@admin.com",
-                Port = 1234,
-                Server = "admin.com",
-            });
-            Assert.Equal("admin@admin.com", (await Assert.IsType<ServerEmailSender>(await emailSenderFactory.GetEmailSender()).GetEmailSettings()).Login);
-            Assert.Equal("admin@admin.com", (await Assert.IsType<StoreEmailSender>(await emailSenderFactory.GetEmailSender(acc.StoreId)).GetEmailSettings()).Login);
-
-            await settings.UpdateSetting(new PoliciesSettings() { DisableStoresToUseServerEmailSettings = true });
-            Assert.Equal("admin@admin.com", (await Assert.IsType<ServerEmailSender>(await emailSenderFactory.GetEmailSender()).GetEmailSettings()).Login);
-            Assert.Null(await Assert.IsType<StoreEmailSender>(await emailSenderFactory.GetEmailSender(acc.StoreId)).GetEmailSettings());
-
-            Assert.IsType<RedirectToActionResult>(await acc.GetController<UIStoresEmailController>().StoreEmailSettings(acc.StoreId, new EmailsViewModel(new EmailSettings
-            {
-                From = "store@store.com",
-                Login = "store@store.com",
-                Password = "store@store.com",
-                Port = tester.MailPitSettings.SmtpPort,
-                Server = tester.MailPitSettings.Hostname
-            }), ""));
-
-            Assert.Equal("store@store.com", (await Assert.IsType<StoreEmailSender>(await emailSenderFactory.GetEmailSender(acc.StoreId)).GetEmailSettings()).Login);
-
-            var sent = await tester.WaitForEvent<Events.EmailSentEvent>(
-                async () =>
-                {
-                    var sender = await emailSenderFactory.GetEmailSender(acc.StoreId);
-                    sender.SendEmail(MailboxAddress.Parse("destination@test.com"), "test", "hello world");
-                });
-            var message = await tester.AssertHasEmail(sent);
-            Assert.Equal("test", message.Subject);
-            Assert.Equal("hello world", message.Text);
         }
 
         [Fact(Timeout = TestUtils.TestTimeout)]

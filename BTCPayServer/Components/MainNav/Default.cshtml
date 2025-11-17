@@ -94,7 +94,7 @@
                                         }
                                         else
                                         {
-                                            <a asp-area="" asp-controller="UIStores" asp-action="SetupWallet" asp-route-cryptoCode="@scheme.Crypto" asp-route-storeId="@Model.Store.Id">
+                                            <a layout-menu-item="@nameof(WalletsNavPages.Transactions)-@scheme.Crypto" asp-area="" asp-controller="UIStores" asp-action="SetupWallet" asp-route-cryptoCode="@scheme.Crypto" asp-route-storeId="@Model.Store.Id">
                                                 <span class="me-2 btcpay-status btcpay-status--@(scheme.Enabled ? "enabled" : "pending")"></span>
                                                 <span>@PrettyName.PrettyName(scheme.PaymentMethodId)</span>
                                             </a>
@@ -314,7 +314,7 @@
                     <a layout-menu-item="@nameof(ServerNavPages.Roles)" asp-controller="UIServer" asp-action="ListRoles" text-translate="true">Roles</a>
                 </li>
                 <li class="nav-item nav-item-sub" permission="@Policies.CanModifyServerSettings">
-                    <a layout-menu-item="Server-@nameof(ServerNavPages.Emails)" asp-controller="UIServer" asp-action="Emails" text-translate="true">Email</a>
+                    <a layout-menu-item="Server-@nameof(ServerNavPages.Emails)" asp-area="@EmailsPlugin.Area" asp-controller="UIServerEmail" asp-action="ServerEmailSettings" text-translate="true">Emails</a>
                 </li>
                 <li class="nav-item nav-item-sub" permission="@Policies.CanModifyServerSettings">
                     <a layout-menu-item="@nameof(ServerNavPages.Services)" asp-controller="UIServer" asp-action="Services" text-translate="true">Services</a>
