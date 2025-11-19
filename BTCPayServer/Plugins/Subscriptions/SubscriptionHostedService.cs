@@ -18,6 +18,7 @@ using BTCPayServer.Services.Rates;
 using Dapper;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using static BTCPayServer.Data.Subscriptions.SubscriberData;
@@ -30,7 +31,7 @@ public class SubscriptionHostedService(
     EventAggregator eventAggregator,
     ApplicationDbContextFactory applicationDbContextFactory,
     SettingsRepository settingsRepository,
-    UIInvoiceController invoiceController,
+    IServiceScopeFactory scopeFactory,
     CurrencyNameTable currencyNameTable,
     LinkGenerator linkGenerator,
     Logs logger) : EventHostedServiceBase(eventAggregator, logger), IPeriodicTask
@@ -151,6 +152,8 @@ public class SubscriptionHostedService(
             invoiceMetadata["planId"] = checkout.PlanId;
             invoiceMetadata["offeringId"] = checkout.Plan.OfferingId;
         }
+        if (GetBuyerEmail(checkout, customerSelector) is string email)
+            invoiceMetadata["buyerEmail"] = email;
 
         var plan = checkout.Plan;
         var existingCredit = checkout.Subscriber?.GetCredit() ?? 0m;
@@ -162,6 +165,8 @@ public class SubscriptionHostedService(
 
         if (amount > 0)
         {
+            using var scope = scopeFactory.CreateScope();
+            var invoiceController = scope.ServiceProvider.GetRequiredService<UIInvoiceController>();
             var request = await invoiceController.CreateInvoiceCoreRaw(new()
                 {
                     Currency = plan.Currency,
@@ -190,6 +195,11 @@ public class SubscriptionHostedService(
             await StartPlanCheckoutWithoutInvoice(subCtx, checkout, customerSelector);
         }
     }
+
+    private static string? GetBuyerEmail(PlanCheckoutData checkout, CustomerSelector customerSelector)
+    => customerSelector is CustomerSelector.Identity { Type: "Email", Value: { } email }
+        ? email
+        : checkout.Subscriber?.Customer.Email.Get();
 
     class MembershipServerSettings
     {
@@ -372,7 +382,6 @@ public class SubscriptionHostedService(
         var checkout = await ctx.PlanCheckouts.GetCheckout(checkoutId);
         var plan = checkout?.Plan;
         if (checkout is null || plan is null ||
-            (invoice.Status == InvoiceStatus.Processing && !plan.OptimisticActivation) ||
             checkout.Plan.Offering.App.StoreDataId != invoice.StoreId)
             return;
 
@@ -381,6 +390,16 @@ public class SubscriptionHostedService(
             throw new InvalidOperationException("Bug: Subscriber is null and not a new subscriber");
 
         var sub = checkout.Subscriber;
+        var processingInvoiceId = invoice.Status == InvoiceStatus.Processing ? invoice.Id : null;
+        if (sub is not null &&
+            sub.ProcessingInvoiceId != processingInvoiceId)
+        {
+            sub.ProcessingInvoiceId = processingInvoiceId;
+            await ctx.SaveChangesAsync();
+        }
+
+        if (invoice.Status == InvoiceStatus.Processing && !plan.OptimisticActivation)
+            return;
 
         if (invoice.Status is InvoiceStatus.Settled or InvoiceStatus.Processing)
         {
