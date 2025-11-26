@@ -187,6 +187,7 @@ namespace BTCPayServer.Plugins
                             // this ensures that the version of MVC is shared between this app and the plugin
                             c.PreferSharedTypes = true;
                             c.IsUnloadable = false;
+                            c.LoadAssembliesInDefaultLoadContext = config.GetOrDefault<bool>("TEST_RUNNER_ENABLED", false);
                         });
                     var pluginAssembly = loader.LoadDefaultAssembly();
 
@@ -489,6 +490,7 @@ namespace BTCPayServer.Plugins
         {
             QueueCommands(pluginDir, ("disable", plugin));
         }
+
 
         // Loads the list of disabled plugins from the file
         private static HashSet<string> GetDisabledPluginIdentifiers(string pluginsFolder)
