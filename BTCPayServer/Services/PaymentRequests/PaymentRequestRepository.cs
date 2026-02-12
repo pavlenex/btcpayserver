@@ -1,14 +1,12 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using BTCPayServer.Abstractions;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
 using BTCPayServer.Services.Invoices;
-using BTCPayServer.Services.Stores;
 using Microsoft.EntityFrameworkCore;
-using Newtonsoft.Json.Linq;
 
 namespace BTCPayServer.Services.PaymentRequests
 {
@@ -138,17 +136,51 @@ namespace BTCPayServer.Services.PaymentRequests
         public async Task<PaymentRequestData[]> FindPaymentRequests(PaymentRequestQuery query, CancellationToken cancellationToken = default)
         {
             await using var context = _ContextFactory.CreateContext();
-            IQueryable<PaymentRequestData> queryable = context.PaymentRequests.AsQueryable();
 
-            if (!string.IsNullOrEmpty(query.StoreId))
-                queryable = queryable.Where(data => data.StoreDataId == query.StoreId);
-
+            IQueryable<PaymentRequestData> queryable;
             if (!string.IsNullOrEmpty(query.SearchText))
             {
                 if (string.IsNullOrEmpty(query.StoreId))
                     throw new InvalidOperationException("PaymentRequestQuery.StoreId should be specified");
-                // We are repeating the StoreId on purpose here, so Postgres can use the index
-                queryable = context.PaymentRequests.Where(p => (p.StoreDataId == query.StoreId && p.ReferenceId == query.SearchText) || p.Id == query.SearchText);
+
+                var search = query.SearchText;
+                // Escape LIKE wildcards to prevent SQL injection
+                var escapedSearch = search.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+                var likePattern = $"%{escapedSearch}%";
+                var amountOrNull = decimal.TryParse(search, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount)
+                    ? amount
+                    : (decimal?)null;
+
+                queryable = context.PaymentRequests
+                    .Where(a => a.StoreDataId == query.StoreId)
+                    .Where(a =>
+                        a.ReferenceId == search
+                        || a.Id == search
+                        || EF.Functions.ILike(a.Title, likePattern, "\\")
+                        || (amountOrNull.HasValue && a.Amount == amountOrNull.Value)
+                    );
+            }
+            else
+            {
+                queryable = context.PaymentRequests.AsQueryable();
+
+                if (!string.IsNullOrEmpty(query.StoreId))
+                {
+                    queryable = queryable.Where(data => data.StoreDataId == query.StoreId);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(query.LabelFilter))
+            {
+                if (string.IsNullOrEmpty(query.StoreId))
+                    throw new InvalidOperationException("PaymentRequestQuery.StoreId should be specified for label filtering");
+
+                queryable = queryable.Where(pr =>
+                    context.StoreLabelLinks.Any(l =>
+                        l.StoreId == query.StoreId &&
+                        l.ObjectId == pr.Id &&
+                        l.StoreLabel.Type == WalletObjectData.Types.PaymentRequest &&
+                        l.StoreLabel.Text == query.LabelFilter.Trim()));
             }
 
             queryable = queryable.Include(data => data.StoreData);
@@ -165,6 +197,12 @@ namespace BTCPayServer.Services.PaymentRequests
             if (!string.IsNullOrEmpty(query.UserId))
                 queryable = queryable.Where(data =>
                     data.StoreData.UserStores.Any(u => u.ApplicationUserId == query.UserId));
+
+            if (query.StartDate.HasValue)
+                queryable = queryable.Where(data => data.Created >= query.StartDate.Value);
+
+            if (query.EndDate.HasValue)
+                queryable = queryable.Where(data => data.Created <= query.EndDate.Value);
 
             queryable = queryable.OrderByDescending(u => u.Created);
 
@@ -222,11 +260,14 @@ namespace BTCPayServer.Services.PaymentRequests
     {
         public string StoreId { get; set; }
         public bool IncludeArchived { get; set; } = true;
-        public Client.Models.PaymentRequestStatus[] Status { get; set; }
+        public PaymentRequestStatus[] Status { get; set; }
         public string UserId { get; set; }
         public int? Skip { get; set; }
         public int? Count { get; set; }
         public string[] Ids { get; set; }
         public string SearchText { get; set; }
+        public DateTimeOffset? StartDate { get; set; }
+        public DateTimeOffset? EndDate { get; set; }
+        public string LabelFilter { get; set; }
     }
 }

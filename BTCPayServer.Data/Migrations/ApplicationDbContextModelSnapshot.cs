@@ -704,6 +704,9 @@ namespace BTCPayServer.Migrations
                     b.Property<string>("StoreDataId")
                         .HasColumnType("text");
 
+                    b.Property<string>("Title")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Status");
@@ -953,6 +956,68 @@ namespace BTCPayServer.Migrations
                     b.ToTable("Stores");
                 });
 
+            modelBuilder.Entity("BTCPayServer.Data.StoreLabelData", b =>
+                {
+                    b.Property<string>("StoreId")
+                        .HasColumnType("text")
+                        .HasColumnName("store_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Color")
+                        .HasColumnType("text")
+                        .HasColumnName("color");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("text");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("type");
+
+                    b.Property<uint>("XMin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("StoreId", "Id");
+
+                    b.ToTable("store_labels", (string)null);
+                });
+
+            modelBuilder.Entity("BTCPayServer.Data.StoreLabelLinkData", b =>
+                {
+                    b.Property<string>("StoreId")
+                        .HasColumnType("text")
+                        .HasColumnName("store_id");
+
+                    b.Property<string>("StoreLabelId")
+                        .HasColumnType("text")
+                        .HasColumnName("store_label_id");
+
+                    b.Property<string>("ObjectId")
+                        .HasColumnType("text")
+                        .HasColumnName("object_id");
+
+                    b.Property<uint>("XMin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("StoreId", "StoreLabelId", "ObjectId");
+
+                    b.HasIndex("StoreId", "ObjectId");
+
+                    b.ToTable("store_label_links", (string)null);
+                });
+
             modelBuilder.Entity("BTCPayServer.Data.StoreRole", b =>
                 {
                     b.Property<string>("Id")
@@ -1035,7 +1100,7 @@ namespace BTCPayServer.Migrations
                     b.ToTable("Files");
                 });
 
-            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.EntitlementData", b =>
+            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.FeatureData", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -1063,7 +1128,7 @@ namespace BTCPayServer.Migrations
                     b.HasIndex("OfferingId", "CustomId")
                         .IsUnique();
 
-                    b.ToTable("subs_entitlements");
+                    b.ToTable("subs_features");
                 });
 
             modelBuilder.Entity("BTCPayServer.Data.Subscriptions.OfferingData", b =>
@@ -1162,7 +1227,11 @@ namespace BTCPayServer.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("now()");
 
-                    b.Property<decimal>("Credited")
+                    b.Property<decimal?>("CreditPurchase")
+                        .HasColumnType("numeric")
+                        .HasColumnName("credit_purchase");
+
+                    b.Property<decimal>("CreditedByInvoice")
                         .HasColumnType("numeric")
                         .HasColumnName("credited");
 
@@ -1199,6 +1268,10 @@ namespace BTCPayServer.Migrations
                     b.Property<bool>("NewSubscriber")
                         .HasColumnType("boolean")
                         .HasColumnName("new_subscriber");
+
+                    b.Property<string>("NewSubscriberEmail")
+                        .HasColumnType("text")
+                        .HasColumnName("new_subscriber_email");
 
                     b.Property<string>("NewSubscriberMetadata")
                         .IsRequired()
@@ -1313,7 +1386,7 @@ namespace BTCPayServer.Migrations
                     b.Property<bool>("OptimisticActivation")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
-                        .HasDefaultValue(true)
+                        .HasDefaultValue(false)
                         .HasColumnName("optimistic_activation");
 
                     b.Property<decimal>("Price")
@@ -1347,21 +1420,21 @@ namespace BTCPayServer.Migrations
                     b.ToTable("subs_plans");
                 });
 
-            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.PlanEntitlementData", b =>
+            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.PlanFeatureData", b =>
                 {
                     b.Property<string>("PlanId")
                         .HasColumnType("text")
                         .HasColumnName("plan_id");
 
-                    b.Property<long>("EntitlementId")
+                    b.Property<long>("FeatureId")
                         .HasColumnType("bigint")
-                        .HasColumnName("entitlement_id");
+                        .HasColumnName("feature_id");
 
-                    b.HasKey("PlanId", "EntitlementId");
+                    b.HasKey("PlanId", "FeatureId");
 
-                    b.HasIndex("EntitlementId");
+                    b.HasIndex("FeatureId");
 
-                    b.ToTable("subs_plans_entitlements");
+                    b.ToTable("subs_plans_features");
                 });
 
             modelBuilder.Entity("BTCPayServer.Data.Subscriptions.PortalSessionData", b =>
@@ -1377,8 +1450,10 @@ namespace BTCPayServer.Migrations
                         .HasColumnName("base_url");
 
                     b.Property<DateTimeOffset>("Expiration")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("expiration");
+                        .HasColumnName("expiration")
+                        .HasDefaultValueSql("now() + interval '1 day'");
 
                     b.Property<long>("SubscriberId")
                         .HasColumnType("bigint")
@@ -1570,6 +1645,10 @@ namespace BTCPayServer.Migrations
                     b.Property<string>("ProcessingInvoiceId")
                         .HasColumnType("text")
                         .HasColumnName("processing_invoice_id");
+
+                    b.Property<DateTimeOffset?>("ReminderDate")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reminder_date");
 
                     b.Property<string>("SuspensionReason")
                         .HasColumnType("text")
@@ -1789,6 +1868,9 @@ namespace BTCPayServer.Migrations
 
                     b.Property<string>("Blob")
                         .HasColumnType("JSONB");
+
+                    b.Property<DateTimeOffset>("DeliveryTime")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("Pruned")
                         .HasColumnType("boolean");
@@ -2195,6 +2277,17 @@ namespace BTCPayServer.Migrations
                     b.Navigation("PullPaymentData");
                 });
 
+            modelBuilder.Entity("BTCPayServer.Data.StoreLabelLinkData", b =>
+                {
+                    b.HasOne("BTCPayServer.Data.StoreLabelData", "StoreLabel")
+                        .WithMany()
+                        .HasForeignKey("StoreId", "StoreLabelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("StoreLabel");
+                });
+
             modelBuilder.Entity("BTCPayServer.Data.StoreRole", b =>
                 {
                     b.HasOne("BTCPayServer.Data.StoreData", "StoreData")
@@ -2244,10 +2337,10 @@ namespace BTCPayServer.Migrations
                     b.Navigation("ApplicationUser");
                 });
 
-            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.EntitlementData", b =>
+            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.FeatureData", b =>
                 {
                     b.HasOne("BTCPayServer.Data.Subscriptions.OfferingData", "Offering")
-                        .WithMany("Entitlements")
+                        .WithMany("Features")
                         .HasForeignKey("OfferingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -2321,11 +2414,11 @@ namespace BTCPayServer.Migrations
                     b.Navigation("Offering");
                 });
 
-            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.PlanEntitlementData", b =>
+            modelBuilder.Entity("BTCPayServer.Data.Subscriptions.PlanFeatureData", b =>
                 {
-                    b.HasOne("BTCPayServer.Data.Subscriptions.EntitlementData", "Entitlement")
+                    b.HasOne("BTCPayServer.Data.Subscriptions.FeatureData", "Feature")
                         .WithMany()
-                        .HasForeignKey("EntitlementId")
+                        .HasForeignKey("FeatureId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -2335,7 +2428,7 @@ namespace BTCPayServer.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Entitlement");
+                    b.Navigation("Feature");
 
                     b.Navigation("Plan");
                 });
@@ -2629,7 +2722,7 @@ namespace BTCPayServer.Migrations
 
             modelBuilder.Entity("BTCPayServer.Data.Subscriptions.OfferingData", b =>
                 {
-                    b.Navigation("Entitlements");
+                    b.Navigation("Features");
 
                     b.Navigation("Plans");
 

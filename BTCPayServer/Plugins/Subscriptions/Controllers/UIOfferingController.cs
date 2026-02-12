@@ -1,8 +1,6 @@
 ﻿#nullable enable
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Extensions;
@@ -12,7 +10,6 @@ using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
 using BTCPayServer.Data.Subscriptions;
 using BTCPayServer.Events;
-using BTCPayServer.Models;
 using BTCPayServer.Plugins.Emails.Views;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
@@ -22,17 +19,15 @@ using BTCPayServer.Views.UIStoreMembership;
 using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using DisplayFormatter = BTCPayServer.Services.DisplayFormatter;
 
 namespace BTCPayServer.Plugins.Subscriptions.Controllers;
 
-[Authorize(Policy = Policies.CanViewMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+[Authorize(Policy = Policies.CanViewOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [AutoValidateAntiforgeryToken]
 [Area(SubscriptionsPlugin.Area)]
 public partial class UIOfferingController(
@@ -45,11 +40,11 @@ public partial class UIOfferingController(
     BTCPayServerEnvironment env,
     DisplayFormatter displayFormatter,
     EmailSenderFactory emailSenderFactory,
-    IEnumerable<EmailTriggerViewModel> emailTriggers
+    EmailTriggerViewModels emailTriggers
 ) : UISubscriptionControllerBase(dbContextFactory, linkGenerator, stringLocalizer, subsService)
 {
     [HttpPost("stores/{storeId}/offerings/{offeringId}/new-subscriber")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> NewSubscriber(
         string storeId, string offeringId,
         string planId,
@@ -74,7 +69,11 @@ public partial class UIOfferingController(
         };
 
         if (prefilledEmail != null && prefilledEmail.IsValidEmail())
+        {
+            checkoutData.NewSubscriberEmail = prefilledEmail;
             checkoutData.InvoiceMetadata = new InvoiceMetadata() { BuyerEmail = prefilledEmail }.ToJObject().ToString();
+        }
+
         ctx.PlanCheckouts.Add(checkoutData);
         await ctx.SaveChangesAsync();
         return RedirectToPlanCheckout(checkoutData.Id);
@@ -101,7 +100,7 @@ public partial class UIOfferingController(
         => displayFormatter.Currency(req?.Amount ?? 0m, req?.Currency ?? "USD", DisplayFormatter.CurrencyFormat.CodeAndSymbol);
 
     [HttpPost("stores/{storeId}/offerings/{offeringId}/Subscribers")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> SubscriberSuspend(string storeId, string offeringId, string customerId, string? command = null,
         string? suspensionReason = null, decimal? amount = null, string? description = null)
     {
@@ -134,7 +133,15 @@ public partial class UIOfferingController(
             var message = command is "credit"
                 ? StringLocalizer["Subscriber {0} has been credited", subName]
                 : StringLocalizer["Subscriber {0} has been charged", subName];
-            await SubsService.UpdateCredit(sub.Id, description ?? "Manual adjustment", command is "credit" ? amount.Value : -amount.Value);
+            await SubsService.UpdateCredit(
+                new SubscriptionHostedService.UpdateCreditParameters()
+                {
+                    SubscriberId = sub.Id,
+                    Description = description ?? "Manual adjustment",
+                    Credit = command is "credit" ? amount.Value : 0.0m,
+                    Charge = command is "charge" ? amount.Value : 0.0m,
+                    AllowOverdraft = true
+                });
             TempData.SetStatusSuccess(message);
         }
 
@@ -155,36 +162,29 @@ public partial class UIOfferingController(
         if (!ModelState.IsValid)
             return View();
 
-        var app = new AppData()
-        {
-            Name = vm.Name,
-            AppType = SubscriptionsAppType.AppType,
-            StoreDataId = storeId
-        };
-        app.SetSettings(new SubscriptionsAppType.AppConfig());
-        await appService.UpdateOrCreateApp(app, sendEvents: false);
-
-        await using var ctx = DbContextFactory.CreateContext();
-        var o = new OfferingData()
-        {
-            AppId = app.Id,
-        };
-        ctx.Offerings.Add(o);
-        await ctx.SaveChangesAsync();
-        app.SetSettings(new SubscriptionsAppType.AppConfig()
-        {
-            OfferingId = o.Id
-        });
-        await appService.UpdateOrCreateApp(app, sendEvents: false);
-        eventAggregator.Publish(new AppEvent.Created(app));
+        var (_, offeringId) = await appService.CreateOffering(storeId, vm.Name);
         this.TempData.SetStatusMessageModel(new()
         {
             Html = StringLocalizer["New offering created. You can now <a href='{0}' class='alert-link'>configure it.</a>",
-                Url.Action(nameof(ConfigureOffering), new { storeId, offeringId = o.Id })!],
+                Url.Action(nameof(ConfigureOffering), new { storeId, offeringId })!],
             Severity = StatusMessageModel.StatusSeverity.Success
         });
-        return GoToOffering(storeId, o.Id, SubscriptionSection.Plans);
+        return GoToOffering(storeId, offeringId, SubscriptionSection.Plans);
     }
+
+
+
+    public static string CreateOfferingCondition(string offeringId)
+        => Predicate(OfferingCondition(offeringId));
+    public static string CreateOfferingCondition(string offeringId, string phase)
+        => Predicate(OfferingCondition(offeringId) + " && " + PhaseCondition(phase));
+
+    public static string CreateOfferingCondition(string offeringId, SubscriberData.PhaseTypes phase)
+        => CreateOfferingCondition(offeringId, phase.ToString());
+
+    static string PhaseCondition(string phase) => $"@.Subscriber.Phase == \"{phase}\"";
+    static string OfferingCondition(string offeringId) => $"@.Offering.Id == \"{offeringId}\"";
+    static string Predicate(string condition) => $"$ ?({condition})";
 
     [HttpPost("stores/{storeId}/offerings/{offeringId}/Mails")]
     public async Task<IActionResult> SaveMailSettings(string storeId, string offeringId, SubscriptionsViewModel vm, string? addEmailRule = null)
@@ -192,13 +192,20 @@ public partial class UIOfferingController(
         await using var ctx = DbContextFactory.CreateContext();
         if (addEmailRule is not null)
         {
+            var condition = CreateOfferingCondition(offeringId);
+            if (addEmailRule.StartsWith($"{PhaseChangedTrigger}-"))
+            {
+                var phase = addEmailRule.Substring($"{PhaseChangedTrigger}-".Length);
+                addEmailRule = PhaseChangedTrigger;
+                condition = CreateOfferingCondition(offeringId, phase);
+            }
             var requestBase = Request.GetRequestBaseUrl();
             var link = LinkGenerator.CreateEmailRuleLink(storeId, requestBase, new()
             {
                 OfferingId = offeringId,
                 Trigger = addEmailRule,
                 To = "{Subscriber.Email}",
-                Condition =  $"$.Offering.Id == \"{offeringId}\"",
+                Condition =  condition,
                 RedirectUrl = new Uri(LinkGenerator.OfferingLink(storeId, offeringId, SubscriptionSection.Mails, requestBase)).AbsolutePath
             });
             return Redirect(link);
@@ -221,6 +228,8 @@ public partial class UIOfferingController(
             return GoToOffering(storeId, offeringId, SubscriptionSection.Mails);
         }
     }
+
+    private static string PhaseChangedTrigger => $"WH-{WebhookSubscriptionEvent.SubscriberPhaseChanged}";
 
     [HttpGet("stores/{storeId}/offerings/{offeringId}/{section}")]
     public async Task<IActionResult> Offering(string storeId, string offeringId, SubscriptionSection section = SubscriptionSection.Plans,
@@ -299,14 +308,36 @@ public partial class UIOfferingController(
         else if (section == SubscriptionSection.Mails)
         {
             var settings = await emailSenderFactory.GetSettings(storeId);
-            vm.EmailConfigured = settings is not null;
+            vm.EmailConfigured = settings?.IsComplete() is true;
             vm.PaymentRemindersDays = offering.DefaultPaymentRemindersDays;
             vm.EmailRules = new();
 
             var triggers = emailTriggers
+                .GetViewModels()
                 .Where(t => WebhookSubscriptionEvent.IsSubscriptionTrigger(t.Trigger))
                 .ToDictionary(t => t.Trigger);
-            vm.AvailableTriggers = triggers.Values.ToList();
+
+            // Those aren't real trigger, we just add trigger condition
+            // on the WH-PhaseChangedTrigger when the user select one of them
+            var phaseChanged = triggers[PhaseChangedTrigger];
+            foreach (string phase in new[] { "Trial", "Normal", "Expired", "Grace" })
+            {
+                var subPhaseChanged = $"{phaseChanged.Trigger}-{phase}";
+                triggers.Add(subPhaseChanged, new()
+                    {
+                        Trigger = subPhaseChanged,
+                        Description = phaseChanged.Description + " - " + StringLocalizer[phase]
+                    });
+            }
+            // Remove the suffix "Subscription - "
+            foreach (var trigger in triggers.Values)
+            {
+                var idx = trigger.Description.IndexOf('-');
+                if (idx != -1)
+                    trigger.Description = trigger.Description.Substring(idx + 1).Trim();
+            }
+
+            vm.AvailableTriggers = triggers.Values.OrderBy(t => t.Description).ToList();
             foreach (var emailRule in
                      await ctx.EmailRules
                          .Where(r => r.StoreId == storeId && r.OfferingId == offeringId)
@@ -326,7 +357,7 @@ public partial class UIOfferingController(
     }
 
     [HttpGet("stores/{storeId}/offerings/{offeringId}/configure")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> ConfigureOffering(string storeId, string offeringId)
     {
         await using var ctx = DbContextFactory.CreateContext();
@@ -352,20 +383,20 @@ public partial class UIOfferingController(
         bool itemsUpdated = false;
         if (command == "AddItem")
         {
-            vm.Entitlements ??= new();
-            vm.Entitlements.Add(new());
+            vm.Features ??= new();
+            vm.Features.Add(new());
             itemsUpdated = true;
         }
         else if (removeIndex is int i)
         {
-            vm.Entitlements.RemoveAt(i);
+            vm.Features.RemoveAt(i);
             itemsUpdated = true;
         }
 
         if (itemsUpdated)
         {
             this.ModelState.Clear();
-            vm.Anchor = "entitlements";
+            vm.Anchor = "features";
         }
 
         if (!ModelState.IsValid || itemsUpdated)
@@ -374,31 +405,31 @@ public partial class UIOfferingController(
         offering.SuccessRedirectUrl = vm.SuccessRedirectUrl;
         offering.App.Name = vm.Name;
 
-        UpdateEntitlements(ctx, offering, vm);
+        UpdateFeatures(ctx, offering, vm);
 
         await ctx.SaveChangesAsync();
         this.TempData.SetStatusSuccess(StringLocalizer["Offering configuration updated"]);
         return GoToOffering(storeId, offeringId);
     }
 
-    private static void UpdateEntitlements(ApplicationDbContext ctx, OfferingData offering, ConfigureOfferingViewModel vm)
+    internal static void UpdateFeatures(ApplicationDbContext ctx, OfferingData offering, ConfigureOfferingViewModel vm)
     {
-        var incomingById = vm.Entitlements
+        var incomingById = vm.Features
             .GroupBy(e => e.Id) // guard against dupes
             .ToDictionary(g => g.Key, g => g.First());
 
-        var existingById = offering.Entitlements
+        var existingById = offering.Features
             .ToDictionary(e => e.CustomId);
 
 
-        var toRemove = offering.Entitlements
+        var toRemove = offering.Features
             .Where(e => !incomingById.ContainsKey(e.CustomId))
             .ToList();
 
         foreach (var e in toRemove)
-            offering.Entitlements.Remove(e);
+            offering.Features.Remove(e);
 
-        ctx.Entitlements.RemoveRange(toRemove);
+        ctx.Features.RemoveRange(toRemove);
 
         foreach (var (id, vmEnt) in incomingById)
         {
@@ -407,7 +438,7 @@ public partial class UIOfferingController(
                 entity = new();
                 entity.CustomId = vmEnt.Id;
                 entity.OfferingId = offering.Id;
-                offering.Entitlements.Add(entity);
+                offering.Features.Add(entity);
             }
 
             entity.Description = vmEnt.ShortDescription;
@@ -415,7 +446,7 @@ public partial class UIOfferingController(
     }
 
     [HttpPost("stores/{storeId}/offerings/{offeringId}/plans/{planId}/delete-plan")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> DeletePlan(string storeId, string offeringId, string planId)
     {
         await using var ctx = DbContextFactory.CreateContext();
@@ -443,7 +474,7 @@ public partial class UIOfferingController(
 
     [HttpGet("stores/{storeId}/offerings/{offeringId}/add-plan")]
     [HttpGet("stores/{storeId}/offerings/{offeringId}/plans/{planId}/edit")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> AddPlan(string storeId, string offeringId, string? planId = null)
     {
         await using var ctx = DbContextFactory.CreateContext();
@@ -459,7 +490,7 @@ public partial class UIOfferingController(
             OfferingId = offeringId,
             PlanId = planId,
             OfferingName = offering.App.Name,
-            Currency = this.HttpContext.GetStoreData().GetStoreBlob().DefaultCurrency,
+            Currency = plan?.Currency ?? this.HttpContext.GetStoreData().GetStoreBlob().DefaultCurrency,
             Price = plan?.Price ?? 0m,
             Name = plan?.Name ?? "",
             Description = plan?.Description ?? "",
@@ -480,11 +511,11 @@ public partial class UIOfferingController(
                 })
                 .OrderBy(p => p.PlanName)
                 .ToList(),
-            Entitlements = offering.Entitlements.OrderBy(e => e.CustomId).Select(e => new AddEditPlanViewModel.Entitlement()
+            Features = offering.Features.OrderBy(e => e.CustomId).Select(e => new AddEditPlanViewModel.Feature()
             {
                 CustomId = e.CustomId,
                 ShortDescription = e.Description,
-                Selected = plan?.GetEntitlement(e.Id) is not null
+                Selected = plan?.GetFeature(e.Id) is not null
             }).ToList(),
         };
 
@@ -493,7 +524,7 @@ public partial class UIOfferingController(
 
     [HttpPost("stores/{storeId}/offerings/{offeringId}/add-plan")]
     [HttpPost("stores/{storeId}/offerings/{offeringId}/plans/{planId}/edit")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> AddPlan(string storeId, string offeringId, AddEditPlanViewModel vm, string? planId = null, string? command = null,
         int? removeIndex = null)
     {
@@ -509,7 +540,11 @@ public partial class UIOfferingController(
         if (plan is null && planId is not null)
             return NotFound();
 
-        plan ??= new PlanData();
+        plan ??= new PlanData()
+        {
+            CreatedAt = DateTimeOffset.UtcNow,
+            PlanFeatures = new()
+        };
         plan.Name = vm.Name;
         plan.Description = vm.Description;
         plan.Price = vm.Price;
@@ -518,11 +553,8 @@ public partial class UIOfferingController(
         plan.TrialDays = vm.TrialDays;
         plan.OptimisticActivation = vm.OptimisticActivation;
         plan.Renewable = vm.Renewable;
-        if (planId is null)
-            plan.CreatedAt = DateTimeOffset.UtcNow;
         plan.RecurringType = vm.RecurringType;
         plan.OfferingId = vm.OfferingId;
-        plan.PlanEntitlements ??= new();
         plan.PlanChanges ??= new();
 
         foreach (var vmPC in vm.PlanChanges)
@@ -562,28 +594,28 @@ public partial class UIOfferingController(
         }
 
         await ctx.SaveChangesAsync();
-        eventAggregator.Publish(new SubscriptionEvent.PlanUpdated(plan));
 
-        var customIdsToIds = offering.Entitlements.ToDictionary(x => x.CustomId, x => x.Id);
-        var enabled = vm.Entitlements.Where(e => e.Selected).Select(e => customIdsToIds[e.CustomId]).ToArray();
+        var customIdsToIds = offering.Features.ToDictionary(x => x.CustomId, x => x.Id);
+        var enabled = vm.Features.Where(e => e.Selected).Select(e => customIdsToIds[e.CustomId]).ToArray();
         await ctx.Database.GetDbConnection()
             .ExecuteAsync("""
-                          DELETE FROM subs_plans_entitlements
-                          WHERE plan_id = @planId AND NOT (entitlement_id = ANY(@enabled));
-                          INSERT INTO subs_plans_entitlements(plan_id, entitlement_id)
+                          DELETE FROM subs_plans_features
+                          WHERE plan_id = @planId AND NOT (feature_id = ANY(@enabled));
+                          INSERT INTO subs_plans_features(plan_id, feature_id)
                           SELECT @planId, e FROM unnest(@enabled) e
                           ON CONFLICT DO NOTHING;
                           """, new { planId = plan.Id, enabled });
-
+        await plan.ReloadFeature(ctx);
         if (planId is null)
             this.TempData.SetStatusSuccess(StringLocalizer["New plan created"]);
         else
             this.TempData.SetStatusSuccess(StringLocalizer["Plan edited"]);
+        eventAggregator.Publish(new SubscriptionEvent.PlanUpdated(plan));
         return GoToOffering(plan.Offering.App.StoreDataId, plan.OfferingId);
     }
 
     [HttpGet("stores/{storeId}/offerings/{offeringId}/subscribers/{customerId}/create-portal")]
-    [Authorize(Policy = Policies.CanModifyMembership, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+    [Authorize(Policy = Policies.CanModifyOfferings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> CreatePortalSession(string storeId, string offeringId, string customerId)
     {
         await using var ctx = DbContextFactory.CreateContext();
@@ -593,7 +625,6 @@ public partial class UIOfferingController(
         var portal = new PortalSessionData()
         {
             SubscriberId = sub.Id,
-            Expiration = DateTimeOffset.UtcNow + TimeSpan.FromHours(1.0),
             BaseUrl = Request.GetRequestBaseUrl()
         };
         ctx.PortalSessions.Add(portal);

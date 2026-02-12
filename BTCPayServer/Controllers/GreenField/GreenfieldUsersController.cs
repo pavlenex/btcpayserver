@@ -101,7 +101,7 @@ namespace BTCPayServer.Controllers.Greenfield
             }
 
             var success = await _userService.SetDisabled(user.Id, request.Locked);
-            return success ? Ok() : this.CreateAPIError("invalid-state",
+            return success is not UserService.SetDisabledResult.Error  ? Ok() : this.CreateAPIError("invalid-state",
                 $"{(request.Locked ? "Locking" : "Unlocking")} user failed");
         }
 
@@ -413,14 +413,7 @@ namespace BTCPayServer.Controllers.Greenfield
                     await _settingsRepository.FirstAdminRegistered(policies, _options.UpdateUrl != null, _options.DisableRegistration, Logs);
                 }
             }
-            var currentUser = await _userManager.GetUserAsync(User);
-            var userEvent = currentUser switch
-            {
-                { } invitedBy => await UserEvent.Invited.Create(user, invitedBy, _callbackGenerator, request.SendInvitationEmail is not false),
-                _ => await UserEvent.Registered.Create(user, _callbackGenerator)
-            };
-            _eventAggregator.Publish(userEvent);
-
+            _eventAggregator.Publish(await UserEvent.Registered.Create(user, await _userManager.GetUserAsync(User), _callbackGenerator, request.SendInvitationEmail is not false));
             var model = await ForAPI(user);
             return CreatedAtAction(string.Empty, model);
         }
@@ -451,7 +444,6 @@ namespace BTCPayServer.Controllers.Greenfield
 
             // Ok, this user is an admin but there are other admins as well so safe to delete
             await _userService.DeleteUserAndAssociatedData(user);
-            _eventAggregator.Publish(new UserEvent.Deleted(user));
 
             return Ok();
         }

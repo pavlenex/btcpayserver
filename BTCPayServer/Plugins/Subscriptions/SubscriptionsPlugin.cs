@@ -32,6 +32,37 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
         services.AddSingleton<SubscriptionHostedService>();
         services.AddSingleton<IHostedService>(s => s.GetRequiredService<SubscriptionHostedService>());
 
+        services.AddScheduledDbScript("Portal Session Cleanup",
+            """
+            WITH expired_portal_session AS (
+                SELECT * FROM subs_portal_sessions
+                WHERE expiration < @now - Interval '1 month'
+                ORDER BY expiration LIMIT 1000
+            ),
+             deleted_portal_session AS (
+                 DELETE FROM subs_portal_sessions
+                 WHERE id IN (SELECT id FROM expired_portal_session)
+                 RETURNING *
+             )
+            SELECT COUNT(*) FROM deleted_portal_session;
+            """);
+
+        services.AddScheduledDbScript("Checkout Session Cleanup",
+            """
+            WITH expired_plan_checkout AS (
+                SELECT * FROM subs_plan_checkouts
+                WHERE expiration < @now - Interval '1 month'
+                ORDER BY expiration LIMIT 1000
+            ),
+                deleted_plan_checkout AS (
+                 DELETE FROM subs_plan_checkouts
+                     WHERE id IN (SELECT id FROM expired_plan_checkout)
+                     RETURNING *
+             )
+            SELECT COUNT(*) FROM deleted_plan_checkout;
+            """);
+
+
         AddSubscriptionsWebhooks(services);
 
         base.Execute(services);
@@ -49,12 +80,13 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
             new("{Offering.Id}", "Offering ID"),
             new("{Offering.AppId}", "Offering app ID"),
             new("{Offering.Metadata}*", "Offering metadata"),
-            new("{Subscriber.Phase}", "Subscriber phase"),
+            new("{Subscriber.Phase}", "Subscriber phase (Trial, Normal, Grace, Expired)"),
             new("{Subscriber.Email}", "Subscriber email"),
+            new("{Subscriber.Metadata}*", "Subscriber metadata"),
             new("{Customer.ExternalRef}", "Customer external reference"),
             new("{Customer.Name}", "Customer name"),
             new("{Customer.Metadata}*", "Customer metadata")
-        }.AddStoresPlaceHolders();
+        };
 
         var viewModels = new List<EmailTriggerViewModel>()
         {
@@ -64,6 +96,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - New subscriber",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Welcome {Customer.Name}!",
                     Body = "Hello {Customer.Name},\n\nThank you for subscribing to our service.\n\nRegards,\n{Store.Name}"
                 },
@@ -75,6 +108,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Subscriber credited",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription has been credited",
                     Body = "Hello {Customer.Name},\n\nYour subscription has been credited.\n\nRegards,\n{Store.Name}"
                 },
@@ -86,6 +120,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Subscriber charged",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription payment has been processed",
                     Body = "Hello {Customer.Name},\n\nYour subscription payment for {Plan.Name} has been processed.\n\nRegards,\n{Store.Name}"
                 },
@@ -97,6 +132,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Subscriber activated",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription is now active",
                     Body = "Hello {Customer.Name},\n\nYour subscription to {Plan.Name} is now active.\n\nRegards,\n{Store.Name}"
                 },
@@ -108,6 +144,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Subscriber phase changed",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription phase has changed",
                     Body = "Hello {Customer.Name},\n\nYour subscription phase has been updated to {Subscriber.Phase}.\n\nRegards,\n{Store.Name}"
                 },
@@ -119,6 +156,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Subscriber disabled",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription has been disabled",
                     Body = "Hello {Customer.Name},\n\nYour subscription has been disabled.\n\nRegards,\n{Store.Name}"
                 },
@@ -130,6 +168,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Payment reminder",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Payment reminder for your subscription",
                     Body = "Hello {Customer.Name},\n\nThis is a reminder about your upcoming subscription payment.\n\nRegards,\n{Store.Name}"
                 },
@@ -141,6 +180,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Plan started",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription plan has started",
                     Body = "Hello {Customer.Name},\n\nYour subscription plan {Plan.Name} has started.\n\nRegards,\n{Store.Name}"
                 },
@@ -152,6 +192,7 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                 Description = "Subscription - Need upgrade",
                 DefaultEmail = new()
                 {
+                    To = ["{Subscriber.Email}"],
                     Subject = "Your subscription needs to be upgraded",
                     Body = "Hello {Customer.Name},\n\nYour subscription needs to be upgraded to continue using our service.\n\nRegards,\n{Store.Name}"
                 },

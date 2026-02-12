@@ -16,6 +16,7 @@ using BTCPayServer.Views.Stores;
 using BTCPayServer.Views.Wallets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Playwright;
+using static Microsoft.Playwright.Assertions;
 using NBitcoin;
 using NBitcoin.RPC;
 using Xunit;
@@ -44,10 +45,12 @@ namespace BTCPayServer.Tests
             await Server.StartAsync();
             var builder = new ConfigurationBuilder();
             builder.AddUserSecrets("AB0AC1DD-9D26-485B-9416-56A33F268117");
+            var conf = builder.Build();
             var playwright = await Playwright.CreateAsync();
             Browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
             {
-                Headless = Server.PayTester.InContainer,
+                Headless = Server.PayTester.InContainer || conf["PLAYWRIGHT_HEADLESS"] == "true",
+                ExecutablePath = conf["PLAYWRIGHT_EXECUTABLE"],
                 SlowMo = 0, // 50 if you want to slow down
                 Args = ["--disable-frame-rate-limit"] // Fix slowness on linux (https://github.com/microsoft/playwright/issues/34625#issuecomment-2822015672)
             });
@@ -116,7 +119,7 @@ namespace BTCPayServer.Tests
 
         public async Task GoToWallet(WalletId walletId = null, WalletsNavPages? navPages = null)
         {
-            var walletPage =  GetWalletIdFromUrl();
+            var walletPage = GetWalletIdFromUrl();
             // If null, we try to go to the wallet of the current page
             if (walletId is null)
             {
@@ -131,6 +134,7 @@ namespace BTCPayServer.Tests
             {
                 await GoToUrl($"wallets/{walletId}");
             }
+
             var cryptoCode = walletId?.CryptoCode ?? "BTC";
             if (navPages is null)
             {
@@ -159,7 +163,8 @@ namespace BTCPayServer.Tests
             return null;
         }
 
-        public async Task<ILocator> FindAlertMessage(StatusMessageModel.StatusSeverity severity = StatusMessageModel.StatusSeverity.Success, string partialText = null)
+        public async Task<ILocator> FindAlertMessage(StatusMessageModel.StatusSeverity severity = StatusMessageModel.StatusSeverity.Success,
+            string partialText = null)
         {
             var locator = await FindAlertMessage(new[] { severity });
             if (partialText is not null)
@@ -167,6 +172,7 @@ namespace BTCPayServer.Tests
                 var txt = await locator.TextContentAsync();
                 Assert.Contains(partialText, txt);
             }
+
             return locator;
         }
 
@@ -192,7 +198,7 @@ namespace BTCPayServer.Tests
 
         public async Task GoToUrl(string uri)
         {
-            await Page.GotoAsync(Link(uri), new() { WaitUntil  = WaitUntilState.Commit } );
+            await Page.GotoAsync(Link(uri), new() { WaitUntil = WaitUntilState.Commit });
         }
 
         public string Link(string uri)
@@ -220,7 +226,11 @@ namespace BTCPayServer.Tests
 
         public TestAccount AsTestAccount()
         {
-            return new TestAccount(Server) { StoreId = StoreId, Email = CreatedUser, Password = Password, RegisterDetails = new Models.AccountViewModels.RegisterViewModel() { Password = "123456", Email = CreatedUser }, IsAdmin = IsAdmin };
+            return new TestAccount(Server)
+            {
+                StoreId = StoreId, Email = CreatedUser, Password = Password,
+                RegisterDetails = new Models.AccountViewModels.RegisterViewModel() { Password = "123456", Email = CreatedUser }, IsAdmin = IsAdmin
+            };
         }
 
         public async Task<(string storeName, string storeId)> CreateNewStore(bool keepId = true, string preferredExchange = "CoinGecko")
@@ -254,7 +264,8 @@ namespace BTCPayServer.Tests
             return (name, storeId);
         }
 
-        public async Task<Mnemonic> GenerateWallet(string cryptoCode = "BTC", string seed = "", bool? importkeys = null, bool isHotWallet = false, ScriptPubKeyType format = ScriptPubKeyType.Segwit)
+        public async Task<Mnemonic> GenerateWallet(string cryptoCode = "BTC", string seed = "", bool? importkeys = null, bool isHotWallet = false,
+            ScriptPubKeyType format = ScriptPubKeyType.Segwit)
         {
             var isImport = !string.IsNullOrEmpty(seed);
             await GoToWalletSettings(cryptoCode);
@@ -318,15 +329,19 @@ namespace BTCPayServer.Tests
         {
             await GoToUrl("/register");
         }
+
         public async Task GoToLogin()
         {
             await GoToUrl("/login");
         }
+
         public async Task Logout()
         {
             await Page.Locator("#menu-item-Account").ClickAsync();
             await Page.Locator("#Nav-Logout").ClickAsync();
         }
+
+        public Task SkipWizard() => Page.ClickAsync("#SkipWizard");
 
         public async Task GoToHome()
         {
@@ -337,6 +352,7 @@ namespace BTCPayServer.Tests
             }
             else { await GoToUrl("/"); }
         }
+
         public async Task AddUserToStore(string storeId, string email, string role)
         {
             var addUser = Page.Locator("#AddUser");
@@ -344,11 +360,13 @@ namespace BTCPayServer.Tests
             {
                 await GoToStore(storeId, StoreNavPages.Users);
             }
+
             await Page.FillAsync("#Email", email);
             await Page.SelectOptionAsync("#Role", role);
             await Page.ClickAsync("#AddUser");
             await FindAlertMessage(partialText: "The user has been added successfully");
         }
+
         public async Task LogIn(string user, string password = "123456")
         {
             await Page.FillAsync("#Email", user);
@@ -356,24 +374,30 @@ namespace BTCPayServer.Tests
             await Page.ClickAsync("#LoginButton");
         }
 
-        public async Task GoToProfile(ManageNavPages navPages = ManageNavPages.Index)
+        public Task GoToProfile(ManageNavPages navPages = ManageNavPages.Index)
+            => GoToProfile(navPages.ToString());
+
+        public async Task GoToProfile(string navPages)
         {
             await Page.ClickAsync("#menu-item-Account");
             await Page.ClickAsync("#Nav-ManageAccount");
-            if (navPages != ManageNavPages.Index)
+            if (navPages != nameof(ManageNavPages.Index))
             {
-                await Page.ClickAsync($"#menu-item-{navPages.ToString()}");
+                await Page.ClickAsync($"#menu-item-{navPages}");
             }
         }
 
-        public async Task GoToServer(ServerNavPages navPages = ServerNavPages.Policies)
+        public Task GoToServer(ServerNavPages navPages = ServerNavPages.Policies)
+            => GoToServer(navPages.ToString());
+
+        public async Task GoToServer(string navPages)
         {
             await Page.ClickAsync("#menu-item-Policies");
-            if (navPages == ServerNavPages.Emails)
+            if (navPages == nameof(ServerNavPages.Emails))
             {
                 await Page.ClickAsync($"#menu-item-Server-{navPages}");
             }
-            else if (navPages != ServerNavPages.Policies)
+            else if (navPages != nameof(ServerNavPages.Policies))
             {
                 await Page.ClickAsync($"#menu-item-{navPages}");
             }
@@ -388,8 +412,9 @@ namespace BTCPayServer.Tests
                 if (link is null or "/logout")
                     continue;
                 Assert.NotNull(link);
-               links.Add(link);
+                links.Add(link);
             }
+
             Assert.NotEmpty(links);
             foreach (var link in links)
             {
@@ -405,14 +430,17 @@ namespace BTCPayServer.Tests
         /// <param name="cryptoCode"></param>
         /// <param name="derivationScheme"></param>
         public async Task AddDerivationScheme(string cryptoCode = "BTC",
-            string derivationScheme = "tpubD6NzVbkrYhZ4XxNXjYTcRujMc8z8734diCthtFGgDMimbG5hUsKBuSTCuUyxWL7YwP7R4A5StMTRQiZnb6vE4pdHWPgy9hbiHuVJfBMumUu-[legacy]")
+            string derivationScheme =
+                "tpubD6NzVbkrYhZ4XxNXjYTcRujMc8z8734diCthtFGgDMimbG5hUsKBuSTCuUyxWL7YwP7R4A5StMTRQiZnb6vE4pdHWPgy9hbiHuVJfBMumUu-[legacy]")
         {
             if (cryptoCode != "BTC" && derivationScheme ==
                 "tpubD6NzVbkrYhZ4XxNXjYTcRujMc8z8734diCthtFGgDMimbG5hUsKBuSTCuUyxWL7YwP7R4A5StMTRQiZnb6vE4pdHWPgy9hbiHuVJfBMumUu-[legacy]")
             {
-                derivationScheme = new BitcoinExtPubKey("tpubD6NzVbkrYhZ4XxNXjYTcRujMc8z8734diCthtFGgDMimbG5hUsKBuSTCuUyxWL7YwP7R4A5StMTRQiZnb6vE4pdHWPgy9hbiHuVJfBMumUu", Network.RegTest)
-                    .ToNetwork(NBitcoin.Altcoins.Litecoin.Instance.Regtest)
-                    .ToString()! + "-[legacy]";
+                derivationScheme =
+                    new BitcoinExtPubKey("tpubD6NzVbkrYhZ4XxNXjYTcRujMc8z8734diCthtFGgDMimbG5hUsKBuSTCuUyxWL7YwP7R4A5StMTRQiZnb6vE4pdHWPgy9hbiHuVJfBMumUu",
+                            Network.RegTest)
+                        .ToNetwork(NBitcoin.Altcoins.Litecoin.Instance.Regtest)
+                        .ToString()! + "-[legacy]";
             }
 
             if (!(await Page.ContentAsync()).Contains($"Setup {cryptoCode} Wallet"))
@@ -486,6 +514,18 @@ namespace BTCPayServer.Tests
             await Page.Locator("#page-primary").ClickAsync();
         }
 
+        public async Task AddStoreLabelAsync(ILocator row, string label)
+        {
+            var labelInput = row.Locator(".ts-control input");
+            await labelInput.WaitForAsync();
+            await labelInput.FillAsync(label);
+            var resp = await Page.RunAndWaitForResponseAsync(
+                () => labelInput.PressAsync("Enter"),
+                r => r.Request.Method == "POST" &&
+                     r.Url.Contains("/update-labels", StringComparison.OrdinalIgnoreCase));
+            Assert.True(resp.Ok, $"update-labels returned {resp.Status}");
+        }
+
         public async Task GoToWalletSettings(string cryptoCode = "BTC")
         {
             await Page.GetByTestId("Wallet-" + cryptoCode).Locator("a").ClickAsync();
@@ -510,8 +550,10 @@ namespace BTCPayServer.Tests
                 if (storeNavPage != StoreNavPages.General)
                     await Page.Locator($"#menu-item-{StoreNavPages.General}").ClickAsync();
             }
+
             await Page.Locator($"#menu-item-{storeNavPage}").ClickAsync();
         }
+
         public async Task ClickCancel()
         {
             await Page.Locator("#CancelWizard").ClickAsync();
@@ -527,13 +569,14 @@ namespace BTCPayServer.Tests
         }
 
 
-
         public async ValueTask DisposeAsync()
         {
             static async Task Try(Func<Task> action)
             {
                 try
-                { await action(); }
+                {
+                    await action();
+                }
                 catch { }
             }
 
@@ -576,6 +619,7 @@ namespace BTCPayServer.Tests
                     goto retry;
                 }
             }
+
             await Server.ExplorerNode.GenerateAsync(1);
             await Page.ReloadAsync();
             await Page.Locator("#CancelWizard").ClickAsync();
@@ -601,12 +645,13 @@ namespace BTCPayServer.Tests
             return (name, appId);
         }
 
-        public async Task PayInvoice(bool mine = false, decimal? amount = null, bool clickRedirect = false)
+        public async Task PayInvoice(bool mine = false, decimal? amount = null, bool clickRedirect = false, bool clickReceipt = false)
         {
             if (amount is not null)
             {
                 await Page.FillAsync("#test-payment-amount", amount.ToString());
             }
+
             await Page.ClickAsync("#FakePayment");
             await Page.Locator("#CheatSuccessMessage").WaitForAsync();
             if (mine)
@@ -619,9 +664,16 @@ namespace BTCPayServer.Tests
                 await Page.Locator("xpath=//*[text()=\"Invoice Paid\" or text()=\"Payment Received\" or text()=\"The invoice hasn't been paid in full.\"]").WaitForAsync();
             if (clickRedirect)
             {
-                await Page.ClickAsync("#StoreLink");
+                await ClickCheckoutRedirect();
+            }
+            if (clickReceipt)
+            {
+                await Page.Locator("#ReceiptLink").WaitForAsync();
+                await Page.ClickAsync("#ReceiptLink");
             }
         }
+
+        public Task ClickCheckoutRedirect() => Page.ClickAsync("#StoreLink");
 
         /// <summary>
         /// Take a screenshot. If running in CI, it is uploaded in the artifacts (see https://github.com/btcpayserver/btcpayserver/pull/6794)
@@ -634,7 +686,7 @@ namespace BTCPayServer.Tests
             screenshotDir = Path.Combine(screenshotDir, this.Server.Scope);
             Directory.CreateDirectory(screenshotDir);
             var filePath = Path.Combine(screenshotDir, fileName);
-            Server.TestLogs.LogInformation("Saving test screenshot to " + filePath);
+            Server.TestLogs.LogInformation("Saving test screenshot to " + Path.GetFullPath(filePath));
             await Page.ScreenshotAsync(new()
             {
                 Path = filePath,
@@ -657,17 +709,32 @@ namespace BTCPayServer.Tests
             }
         }
 
+        public async Task<IAsyncDisposable> SwitchPage(Func<Task> pageOpeningAction, bool closeAfter = true)
+        {
+            var o = Page.Context.WaitForPageAsync();
+            await pageOpeningAction();
+            await o;
+            return await SwitchPage(o, closeAfter);
+        }
+
         public async Task<IAsyncDisposable> SwitchPage(Task<IPage> page, bool closeAfter = true)
         {
             var p = await page;
             return await SwitchPage(p, closeAfter);
         }
+
         public async Task<IAsyncDisposable> SwitchPage(IPage page, bool closeAfter = true)
         {
             var old = Page;
             Page = page;
             await page.BringToFrontAsync();
             return new SwitchDisposable(page, old, this, closeAfter);
+        }
+
+        public async Task<IAsyncDisposable> SwitchPage()
+        {
+            var newPage = await Browser.NewPageAsync();
+            return await SwitchPage(newPage);
         }
 
         public async Task<WalletTransactionsPMO> GoToWalletTransactions(WalletId walletId = null)
@@ -682,6 +749,7 @@ namespace BTCPayServer.Tests
         {
             private IPage Page => tester.Page;
             public Task SelectAll() => Page.SetCheckedAsync(".mass-action-select-all", true);
+
             public async Task Select(params uint256[] txs)
             {
                 foreach (var txId in txs)
@@ -693,7 +761,7 @@ namespace BTCPayServer.Tests
             public Task BumpFeeSelected() => Page.ClickAsync("#BumpFee");
 
             public Task BumpFee(uint256? txId = null) => Page.ClickAsync($"{TxRowSelector(txId)} .bumpFee-btn");
-            static string TxRowSelector(uint256? txId = null) => txId is null ? ".transaction-row:first-of-type"  : $".transaction-row[data-value=\"{txId}\"]";
+            static string TxRowSelector(uint256? txId = null) => txId is null ? ".transaction-row:first-of-type" : $".transaction-row[data-value=\"{txId}\"]";
 
             public async Task AssertRowContains(uint256 txId, string expected)
             {
@@ -702,6 +770,7 @@ namespace BTCPayServer.Tests
             }
 
             public Task AssertHasLabels(string label) => AssertHasLabels(null, label);
+
             public async Task AssertHasLabels(uint256? txId, string label)
             {
                 // This is complicated, the labels are asynchronously added.
@@ -726,6 +795,7 @@ namespace BTCPayServer.Tests
 
                     return;
                 }
+
                 tried++;
                 await Page.ReloadAsync();
                 goto retry;
@@ -781,6 +851,7 @@ namespace BTCPayServer.Tests
                 var expected = ("-" + Money.Coins(amount).ToString() + " " + "BTC").NormalizeWhitespaces();
                 Assert.Equal(expected, actual);
             }
+
             public async Task Broadcast() => await page.ClickAsync("#BroadcastTransaction");
         }
 
@@ -804,6 +875,7 @@ namespace BTCPayServer.Tests
             await Page.FillAsync("#ConfirmInput", "DELETE");
             await Page.ClickAsync("#ConfirmContinue");
         }
+
         public async Task AssertPageAccess(bool shouldHaveAccess, string url)
         {
             await GoToUrl(url);
@@ -824,11 +896,47 @@ namespace BTCPayServer.Tests
             }
             else
             {
-               Assert.Contains("- Denied</h", content);
+                Assert.Contains("- Denied</h", content);
             }
         }
 
         public Task FastReloadAsync()
             => Page.ReloadAsync(new() { WaitUntil = WaitUntilState.Commit });
+
+        public async Task ClickOnEmailLink(MailPitClient.Message email)
+        {
+            var match = Regex.Match(email.Html, "href=[\"']([^\"']+)[\"']");
+            if (!match.Success)
+                throw new InvalidOperationException("No href found in email HTML");
+            var link = match.Groups[1].Value;
+            link = System.Net.WebUtility.HtmlDecode(link);
+            await GoToUrl(link);
+        }
+
+        public async Task SelectStoreContext(string storeId)
+        {
+            await Page.ClickAsync("#StoreSelectorToggle");
+            await Page.ClickAsync($"#StoreSelectorMenuItem-{storeId}");
+        }
+
+        public async Task FillAlertDialog(string text, Func<Task> openDialog)
+        {
+            // Handle the alert dialog in Playwright
+            // ReSharper disable once AsyncVoidMethod
+            async void Callback(object? sender, IDialog e)
+                => await e.AcceptAsync(text);
+            Page.Dialog += Callback;
+            try
+            {
+                await openDialog();
+            }
+            finally
+            {
+                Page.Dialog -= Callback;
+            }
+        }
+
+        public Task ElementDoesNotExist(string selector)
+            => Expect(Page.Locator(selector)).ToHaveCountAsync(0);
     }
 }

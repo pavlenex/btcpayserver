@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,9 +15,11 @@ using BTCPayServer.Forms;
 using BTCPayServer.Forms.Models;
 using BTCPayServer.Models;
 using BTCPayServer.Models.PaymentRequestViewModels;
+using BTCPayServer.Models.WalletViewModels;
 using BTCPayServer.PaymentRequest;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Invoices;
+using BTCPayServer.Services.Labels;
 using BTCPayServer.Services.PaymentRequests;
 using BTCPayServer.Services.Rates;
 using BTCPayServer.Services.Stores;
@@ -46,6 +49,8 @@ namespace BTCPayServer.Controllers
         private readonly StoreRepository _storeRepository;
         private readonly UriResolver _uriResolver;
         private readonly BTCPayNetworkProvider _networkProvider;
+        private readonly StoreLabelRepository _storeLabelRepository;
+
 
         private FormComponentProviders FormProviders { get; }
         public FormDataService FormDataService { get; }
@@ -66,7 +71,8 @@ namespace BTCPayServer.Controllers
             FormDataService formDataService,
             IStringLocalizer stringLocalizer,
             ApplicationDbContextFactory dbContextFactory,
-            BTCPayNetworkProvider networkProvider)
+            BTCPayNetworkProvider networkProvider,
+            StoreLabelRepository storeLabelRepository)
         {
             _InvoiceController = invoiceController;
             _handlers = handlers;
@@ -81,8 +87,9 @@ namespace BTCPayServer.Controllers
             _dbContextFactory = dbContextFactory;
             FormProviders = formProviders;
             FormDataService = formDataService;
-            _networkProvider = networkProvider;
             StringLocalizer = stringLocalizer;
+            _networkProvider = networkProvider;
+            _storeLabelRepository = storeLabelRepository;
         }
 
         [HttpGet("/stores/{storeId}/payment-requests")]
@@ -92,7 +99,12 @@ namespace BTCPayServer.Controllers
             model = this.ParseListQuery(model ?? new ListPaymentRequestsViewModel());
 
             var store = GetCurrentStore();
-            var fs = new SearchString(model.SearchTerm, model.TimezoneOffset ?? 0);
+            var timezoneOffset = model.TimezoneOffset ?? 0;
+            var fs = new SearchString(model.SearchTerm, timezoneOffset);
+            var textSearch = model.SearchText;
+            var startDate = fs.GetFilterDate("startdate", timezoneOffset);
+            var endDate   = fs.GetFilterDate("enddate",   timezoneOffset);
+
             var result = await _PaymentRequestRepository.FindPaymentRequests(new PaymentRequestQuery
             {
                 UserId = GetUserId(),
@@ -101,20 +113,53 @@ namespace BTCPayServer.Controllers
                 Count = model.Count,
                 Status = fs.GetFilterArray("status")?.Select(s => Enum.Parse<Client.Models.PaymentRequestStatus>(s, true)).ToArray(),
                 IncludeArchived = fs.GetFilterBool("includearchived") ?? false,
-                SearchText = model.SearchText
+                SearchText = model.SearchText,
+                StartDate = startDate,
+                EndDate = endDate,
+                LabelFilter = model.LabelFilter
             });
 
             model.Search = fs;
-            model.SearchText = fs.TextSearch;
+            model.SearchText = textSearch;
 
-            model.Items = result.Select(data =>
+            var items = result.Select(data => new ViewPaymentRequestViewModel(data)
             {
-                return new ViewPaymentRequestViewModel(data)
-                {
-                    AmountFormatted = _displayFormatter.Currency(data.Amount, data.Currency)
-                };
+                AmountFormatted = _displayFormatter.Currency(data.Amount, data.Currency)
             }).ToList();
 
+            var paymentRequestIds = items.Select(i => i.Id).ToArray();
+            var labelsByPaymentRequestId =
+                await _storeLabelRepository.GetStoreLabelsForObjects(store.Id, WalletObjectData.Types.PaymentRequest, paymentRequestIds);
+
+            foreach (var item in items)
+            {
+                if (labelsByPaymentRequestId.TryGetValue(item.Id, out var labelTuples))
+                {
+                    item.Labels = labelTuples.Select(l => new TransactionTagModel
+                    {
+                        Text = l.Label,
+                        Color = l.Color,
+                        TextColor = ColorPalette.Default.TextColor(l.Color)
+                    }).ToList();
+                }
+                else
+                {
+                    item.Labels = new List<TransactionTagModel>();
+                }
+            }
+
+            var allLabels = await _storeLabelRepository.GetStoreLabels(store.Id, WalletObjectData.Types.PaymentRequest);
+            model.Labels = allLabels
+                .Select(l => new TransactionTagModel
+                {
+                    Text = l.Label,
+                    Color = l.Color,
+                    TextColor = ColorPalette.Default.TextColor(l.Color)
+                })
+                .OrderBy(l => l.Text)
+                .ToList();
+
+            model.Items = items;
             return View(model);
         }
 
@@ -149,6 +194,15 @@ namespace BTCPayServer.Controllers
 
             vm.Currency ??= storeBlob.DefaultCurrency;
             vm.HasEmailRules = await HasEmailRules(store.Id);
+
+            if (string.IsNullOrEmpty(payReqId))
+                return View(nameof(EditPaymentRequest), vm);
+
+            var labels = await _storeLabelRepository.GetStoreLabelsForObjects(store.Id, WalletObjectData.Types.PaymentRequest, new[] { payReqId });
+            if (labels.TryGetValue(payReqId, out var labelTuples))
+            {
+                vm.Labels = labelTuples.Select(l => l.Label).ToList();
+            }
 
             return View(nameof(EditPaymentRequest), vm);
         }
@@ -226,7 +280,7 @@ namespace BTCPayServer.Controllers
                 viewModel.Currency = data.Currency;
             }
 
-            blob.Title = viewModel.Title;
+            data.Title = viewModel.Title;
             blob.Email = viewModel.Email;
             blob.Description = viewModel.Description;
             data.Amount = viewModel.Amount;
@@ -244,6 +298,12 @@ namespace BTCPayServer.Controllers
                 data.Created = DateTimeOffset.UtcNow;
 
             data = await _PaymentRequestRepository.CreateOrUpdatePaymentRequest(data);
+
+            await _storeLabelRepository.SetStoreObjectLabels(
+                store.Id,
+                WalletObjectData.Types.PaymentRequest,
+                data.Id,
+                viewModel.Labels?.ToArray() ?? Array.Empty<string>());
 
             TempData[WellKnownTempData.SuccessMessage] = isNewPaymentRequest
                 ? StringLocalizer["Payment request \"{0}\" created successfully", viewModel.Title].Value
@@ -522,6 +582,91 @@ namespace BTCPayServer.Controllers
             await _PaymentRequestRepository.UpdatePaymentRequestStatus(payReqId, PaymentRequestStatus.Completed);
 
             return RedirectToAction("GetPaymentRequests", new { storeId = paymentRequest.StoreDataId });
+        }
+
+        [HttpGet("/stores/{storeId}/payment-requests/labels")]
+        [Authorize(Policy = Policies.CanViewPaymentRequests, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+        public async Task<IActionResult> PaymentRequestLabels(string storeId)
+        {
+            var labels = await _storeLabelRepository.GetStoreLabels(storeId, WalletObjectData.Types.PaymentRequest);
+
+            var vm = new PaymentRequestLabelsViewModel
+            {
+                StoreId = storeId,
+                Labels = labels
+                    .Where(l => !WalletObjectData.Types.AllTypes.Contains(l.Label))
+                    .Select(tuple => new PaymentRequestLabelViewModel
+                    {
+                        Label = tuple.Label,
+                        Color = tuple.Color,
+                        TextColor = ColorPalette.Default.TextColor(tuple.Color)
+                    })
+            };
+
+            return View(vm);
+        }
+
+        [HttpPost("/stores/{storeId}/payment-requests/labels/{id}/delete")]
+        [Authorize(Policy = Policies.CanModifyPaymentRequests, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+        public async Task<IActionResult> DeletePaymentRequestLabel(string storeId, string id)
+        {
+            var store = GetCurrentStore();
+            if (store is null || store.Id != storeId)
+                return NotFound();
+
+            if (WalletObjectData.Types.AllTypes.Contains(id))
+            {
+                TempData[WellKnownTempData.ErrorMessage] = StringLocalizer["This label cannot be deleted."].Value;
+                return RedirectToAction(nameof(PaymentRequestLabels), new { storeId });
+            }
+
+            var ok = await _storeLabelRepository.RemoveStoreLabels(
+                storeId,
+                WalletObjectData.Types.PaymentRequest,
+                new[] { id });
+
+            TempData[WellKnownTempData.SuccessMessage] = ok
+                ? StringLocalizer["The label has been successfully deleted."].Value
+                : StringLocalizer["The label could not be deleted."].Value;
+
+            return RedirectToAction(nameof(PaymentRequestLabels), new { storeId });
+        }
+
+        [HttpPost("/stores/{storeId}/payment-requests/labels/{id}/edit")]
+        [Authorize(Policy = Policies.CanModifyPaymentRequests, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
+        public async Task<IActionResult> EditPaymentRequestLabel(string storeId, string id, string newLabel)
+        {
+            if (string.IsNullOrWhiteSpace(newLabel))
+            {
+                TempData[WellKnownTempData.ErrorMessage] = StringLocalizer["Label name cannot be empty."].Value;
+                return RedirectToAction(nameof(PaymentRequestLabels), new { storeId });
+            }
+
+            newLabel = newLabel.Trim();
+            if (newLabel == id)
+                return RedirectToAction(nameof(PaymentRequestLabels), new { storeId });
+
+            var store = GetCurrentStore();
+            if (store is null || store.Id != storeId)
+                return NotFound();
+
+            if (WalletObjectData.Types.AllTypes.Contains(id) || WalletObjectData.Types.AllTypes.Contains(newLabel))
+            {
+                TempData[WellKnownTempData.ErrorMessage] = StringLocalizer["This label cannot be renamed."].Value;
+                return RedirectToAction(nameof(PaymentRequestLabels), new { storeId });
+            }
+
+            var ok = await _storeLabelRepository.RenameStoreLabel(
+                storeId,
+                WalletObjectData.Types.PaymentRequest,
+                id,
+                newLabel);
+
+            TempData[WellKnownTempData.SuccessMessage] = ok
+                ? StringLocalizer["The label has been successfully renamed."].Value
+                : StringLocalizer["The label could not be renamed."].Value;
+
+            return RedirectToAction(nameof(PaymentRequestLabels), new { storeId });
         }
 
         private string GetUserId() => _UserManager.GetUserId(User);

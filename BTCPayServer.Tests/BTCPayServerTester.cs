@@ -10,7 +10,10 @@ using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Configuration;
+using BTCPayServer.Controllers;
 using BTCPayServer.Hosting;
+using BTCPayServer.Payments;
+using BTCPayServer.Payments.Bitcoin;
 using BTCPayServer.Rating;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Invoices;
@@ -25,6 +28,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using NBXplorer;
@@ -181,6 +185,7 @@ namespace BTCPayServer.Tests
                     {
                         options.ValidateScopes = true;
                     })
+                    .UseEnvironment(HostEnvironment)
                     .UseConfiguration(conf)
                     .UseContentRoot(FindBTCPayServerDirectory())
                     .UseWebRoot(Path.Combine(FindBTCPayServerDirectory(), "wwwroot"))
@@ -218,10 +223,16 @@ namespace BTCPayServer.Tests
 
             if (MockRates)
             {
-                var rateProvider = (RateProviderFactory)_Host.Services.GetService(typeof(RateProviderFactory));
+                var rateProvider = (RateProviderFactory)_Host.Services.GetRequiredService(typeof(RateProviderFactory));
+                var realKraken = rateProvider.Providers["kraken"];
+                var realBitflyer = rateProvider.Providers["bitflyer"];
+                var realNDax = rateProvider.Providers["ndax"];
+                var realBitfinex = rateProvider.Providers["bitfinex"];
+                var realBitpay = rateProvider.Providers["bitpay"];
                 rateProvider.Providers.Clear();
+                rateProvider.AvailableRateProviders.Clear();
 
-                coinAverageMock = new MockRateProvider();
+                coinAverageMock = new MockRateProvider(new("coingecko", "CoinGecko", "https://api.coingecko.com/api/v3/"));
                 coinAverageMock.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_USD"), new BidAsk(5000m)));
                 coinAverageMock.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_EUR"), new BidAsk(4000m)));
                 coinAverageMock.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_CAD"), new BidAsk(4500m)));
@@ -229,25 +240,30 @@ namespace BTCPayServer.Tests
                 coinAverageMock.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("LTC_USD"), new BidAsk(500m)));
                 rateProvider.Providers.Add("coingecko", coinAverageMock);
 
-                var bitflyerMock = new MockRateProvider();
+                var bitflyerMock = new MockRateProvider(realBitflyer.RateSourceInfo);
                 bitflyerMock.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_JPY"), new BidAsk(700000m)));
                 rateProvider.Providers.Add("bitflyer", bitflyerMock);
 
-                var ndax = new MockRateProvider();
+                var ndax = new MockRateProvider(realNDax.RateSourceInfo);
                 ndax.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_CAD"), new BidAsk(6000m)));
                 rateProvider.Providers.Add("ndax", ndax);
 
-                var bitfinex = new MockRateProvider();
+                var bitfinex = new MockRateProvider(realBitfinex.RateSourceInfo);
                 bitfinex.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("UST_BTC"), new BidAsk(0.000136m)));
                 rateProvider.Providers.Add("bitfinex", bitfinex);
 
-                var bitpay = new MockRateProvider();
+                var bitpay = new MockRateProvider(realBitpay.RateSourceInfo);
                 bitpay.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("ETB_BTC"), new BidAsk(0.1m)));
                 bitpay.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("DOGE_BTC"), new BidAsk(0.004m)));
                 rateProvider.Providers.Add("bitpay", bitpay);
-                var kraken = new MockRateProvider();
+                var kraken = new MockRateProvider(realKraken.RateSourceInfo);
                 kraken.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("ETH_BTC"), new BidAsk(0.1m)));
+                kraken.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_LTC"), new BidAsk(162m)));
+                kraken.ExchangeRates.Add(new PairRate(CurrencyPair.Parse("BTC_USD"), new BidAsk(5000m)));
                 rateProvider.Providers.Add("kraken", kraken);
+
+                foreach (var prov in rateProvider.Providers)
+                    rateProvider.AvailableRateProviders.Add(prov.Value.RateSourceInfo);
             }
 
             // reset test server policies
@@ -261,11 +277,36 @@ namespace BTCPayServer.Tests
         MockRateProvider coinAverageMock;
         private async Task WaitSiteIsOperational()
         {
-            _ = HttpClient.GetAsync("/").ConfigureAwait(false);
-            using var cts = new CancellationTokenSource(20_000);
-            var synching = WaitIsFullySynched(cts.Token);
-            await Task.WhenAll(synching).ConfigureAwait(false);
             // Opportunistic call to wake up view compilation in debug mode, we don't need to await.
+            _ = HttpClient.GetAsync("/").ConfigureAwait(false);
+            try
+            {
+                using var cts = new CancellationTokenSource(20_000);
+                await WaitIsFullySynched(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Sometimes NBX needs a kick...
+                await MineOneBlock();
+                using var cts = new CancellationTokenSource(20_000);
+                await WaitIsFullySynched(cts.Token);
+            }
+        }
+
+        private async Task MineOneBlock()
+        {
+            var cheatModes = GetService<IEnumerable<ICheckoutCheatModeExtension>>();
+            foreach (var cheatMode in cheatModes.OfType<BitcoinCheckoutCheatModeExtension>())
+            {
+                try
+                {
+                    await cheatMode.MineBlock(new ICheckoutCheatModeExtension.MineBlockContext()
+                    {
+                        BlockCount = 1
+                    });
+                }
+                catch { }
+            }
         }
 
         private async Task WaitIsFullySynched(CancellationToken cancellationToken)
@@ -274,6 +315,7 @@ namespace BTCPayServer.Tests
             while (!o.All(d => d.AllAvailable()))
             {
                 await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+
             }
         }
 
@@ -304,6 +346,7 @@ namespace BTCPayServer.Tests
         public string SSHKeyFile { get; internal set; }
         public string SSHConnection { get; set; }
         public bool NoCSP { get; set; }
+        public string HostEnvironment { get; set; } = Environments.Development;
 
         public T GetController<T>(string userId = null, string storeId = null, bool isAdmin = false) where T : Controller
         {

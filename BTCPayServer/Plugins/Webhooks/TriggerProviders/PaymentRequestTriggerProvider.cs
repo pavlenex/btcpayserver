@@ -4,8 +4,6 @@ using System.Threading.Tasks;
 using BTCPayServer.Abstractions;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
-using BTCPayServer.HostedServices;
-using BTCPayServer.Plugins.Emails;
 using BTCPayServer.Plugins.Emails.HostedServices;
 using BTCPayServer.Services.PaymentRequests;
 using Microsoft.AspNetCore.Mvc;
@@ -62,7 +60,7 @@ public class PaymentRequestTriggerProvider(LinkGenerator linkGenerator)
             ["TrimmedId"] = trimmedId,
             ["Amount"] = data.Amount.ToString(CultureInfo.InvariantCulture),
             ["Currency"] = data.Currency,
-            ["Title"] = blob.Title,
+            ["Title"] = data.Title,
             ["Description"] = blob.Description,
             ["ReferenceId"] = data.ReferenceId,
             ["Status"] = evt.Data.Status.ToString(),

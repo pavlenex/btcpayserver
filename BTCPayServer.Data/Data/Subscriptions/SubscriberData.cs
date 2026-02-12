@@ -51,7 +51,7 @@ public class SubscriberData : BaseEntityData
     public decimal? PaidAmount { get; set; }
 
     public decimal GetCredit(string? currency = null)
-        => Credits.FirstOrDefault(c => (currency ?? c.Currency) == Plan.Currency)?.Amount ?? 0m;
+        => Credits.FirstOrDefault(c => (currency ?? c.Currency).Equals(Plan.Currency, StringComparison.OrdinalIgnoreCase))?.Amount ?? 0m;
 
     public decimal MissingCredit()
     => Math.Max(0m, NextPlan.Price - GetCredit(NextPlan.Currency));
@@ -68,6 +68,9 @@ public class SubscriberData : BaseEntityData
 
     [Column("period_end")]
     public DateTimeOffset? PeriodEnd { get; set; }
+
+    [Column("reminder_date")]
+    public DateTimeOffset? ReminderDate { get; set; }
 
     public decimal? GetUnusedPeriodAmount() => GetUnusedPeriodAmount(DateTimeOffset.UtcNow);
 
@@ -127,16 +130,16 @@ public class SubscriberData : BaseEntityData
     [NotMapped]
     public bool CanStartNextPlan => CanStartNextPlanEx(false);
 
-    public bool CanStartNextPlanEx(bool newSubscriber) => this is
+    public bool CanStartNextPlanEx(bool newSubscriber, PhaseTypes? phase = null) => this is
     {
-        Phase: not PhaseTypes.Normal,
         NextPlan:
         {
             Status: Data.Subscriptions.PlanData.PlanStatus.Active
         },
         IsSuspended: false
     }
-    // If we stay on the same plan, check that the next plan is renwable
+    && (phase ?? Phase) is not PhaseTypes.Normal
+    // If we stay on the same plan, check that the next plan is renewable
     && (newSubscriber || this.PlanId != this.NextPlan.Id || this.IsNextPlanRenewable);
 
     [NotMapped]
@@ -197,6 +200,7 @@ public class SubscriberData : BaseEntityData
             PlanStarted = now;
             PeriodEnd = null;
             TrialEnd = now.AddDays(plan.TrialDays);
+            ReminderDate = TrialEnd - TimeSpan.FromDays(PaymentReminderDaysOrDefault);
             GracePeriodEnd = null;
             PaidAmount = null;
         }
@@ -212,26 +216,12 @@ public class SubscriberData : BaseEntityData
             };
 
             (PeriodEnd, GracePeriodEnd) = plan.GetPeriodEnd(startDate);
+            ReminderDate = PeriodEnd - TimeSpan.FromDays(PaymentReminderDaysOrDefault);
             PlanStarted = now;
             TrialEnd = null;
             PaidAmount = plan.Price;
         }
     }
-
-    public DateTimeOffset? GetReminderDate()
-    {
-        DateTimeOffset? date = this switch
-        {
-            { Phase: PhaseTypes.Normal or PhaseTypes.Grace, PeriodEnd: { } pe } => pe,
-            { Phase: PhaseTypes.Trial, TrialEnd: { } te } => te,
-            _ => null
-        };
-        if (date is null)
-            return null;
-
-        return date - TimeSpan.FromDays(PaymentReminderDaysOrDefault);
-    }
-
 
     [NotMapped]
     public int PaymentReminderDaysOrDefault => PaymentReminderDays ?? Plan.Offering.DefaultPaymentRemindersDays;

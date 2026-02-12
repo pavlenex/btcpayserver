@@ -87,7 +87,7 @@ namespace BTCPayServer.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "subs_entitlements",
+                name: "subs_features",
                 columns: table => new
                 {
                     id = table.Column<long>(type: "bigint", nullable: false)
@@ -98,9 +98,9 @@ namespace BTCPayServer.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_subs_entitlements", x => x.id);
+                    table.PrimaryKey("PK_subs_features", x => x.id);
                     table.ForeignKey(
-                        name: "FK_subs_entitlements_subs_offerings_offering_id",
+                        name: "FK_subs_features_subs_offerings_offering_id",
                         column: x => x.offering_id,
                         principalTable: "subs_offerings",
                         principalColumn: "id",
@@ -123,7 +123,7 @@ namespace BTCPayServer.Migrations
                     description = table.Column<string>(type: "text", nullable: true),
                     members_count = table.Column<int>(type: "integer", nullable: false),
                     monthly_revenue = table.Column<decimal>(type: "numeric", nullable: false),
-                    optimistic_activation = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
+                    optimistic_activation = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
                     renewable = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
                     metadata = table.Column<string>(type: "jsonb", nullable: false, defaultValueSql: "'{}'::jsonb"),
                     additional_data = table.Column<string>(type: "jsonb", nullable: false, defaultValueSql: "'{}'::jsonb"),
@@ -166,23 +166,23 @@ namespace BTCPayServer.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "subs_plans_entitlements",
+                name: "subs_plans_features",
                 columns: table => new
                 {
                     plan_id = table.Column<string>(type: "text", nullable: false),
-                    entitlement_id = table.Column<long>(type: "bigint", nullable: false)
+                    feature_id = table.Column<long>(type: "bigint", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_subs_plans_entitlements", x => new { x.plan_id, x.entitlement_id });
+                    table.PrimaryKey("PK_subs_plans_features", x => new { x.plan_id, x.feature_id });
                     table.ForeignKey(
-                        name: "FK_subs_plans_entitlements_subs_entitlements_entitlement_id",
-                        column: x => x.entitlement_id,
-                        principalTable: "subs_entitlements",
+                        name: "FK_subs_plans_features_subs_features_feature_id",
+                        column: x => x.feature_id,
+                        principalTable: "subs_features",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "FK_subs_plans_entitlements_subs_plans_plan_id",
+                        name: "FK_subs_plans_features_subs_plans_plan_id",
                         column: x => x.plan_id,
                         principalTable: "subs_plans",
                         principalColumn: "id",
@@ -257,12 +257,14 @@ namespace BTCPayServer.Migrations
                     is_trial = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
                     plan_id = table.Column<string>(type: "text", nullable: false),
                     new_subscriber = table.Column<bool>(type: "boolean", nullable: false),
+                    new_subscriber_email = table.Column<string>(type: "text", nullable: true),
                     subscriber_id = table.Column<long>(type: "bigint", nullable: true),
                     invoice_metadata = table.Column<string>(type: "jsonb", nullable: false, defaultValueSql: "'{}'::jsonb"),
                     new_subscriber_metadata = table.Column<string>(type: "jsonb", nullable: false, defaultValueSql: "'{}'::jsonb"),
                     test_account = table.Column<bool>(type: "boolean", nullable: false),
                     credited = table.Column<decimal>(type: "numeric", nullable: false),
                     plan_started = table.Column<bool>(type: "boolean", nullable: false),
+                    credit_purchase = table.Column<decimal>(type: "numeric", nullable: true),
                     refund_amount = table.Column<decimal>(type: "numeric", nullable: true),
                     on_pay = table.Column<string>(type: "text", nullable: false, defaultValue: "SoftMigration"),
                     base_url = table.Column<string>(type: "text", nullable: false),
@@ -300,7 +302,7 @@ namespace BTCPayServer.Migrations
                 {
                     id = table.Column<string>(type: "text", nullable: false),
                     subscriber_id = table.Column<long>(type: "bigint", nullable: false),
-                    expiration = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    expiration = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now() + interval '1 day'"),
                     base_url = table.Column<string>(type: "text", nullable: false)
                 },
                 constraints: table =>
@@ -395,8 +397,8 @@ namespace BTCPayServer.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_subs_entitlements_offering_id_custom_id",
-                table: "subs_entitlements",
+                name: "IX_subs_features_offering_id_custom_id",
+                table: "subs_features",
                 columns: new[] { "offering_id", "custom_id" },
                 unique: true);
 
@@ -436,9 +438,9 @@ namespace BTCPayServer.Migrations
                 column: "offering_id");
 
             migrationBuilder.CreateIndex(
-                name: "IX_subs_plans_entitlements_entitlement_id",
-                table: "subs_plans_entitlements",
-                column: "entitlement_id");
+                name: "IX_subs_plans_features_feature_id",
+                table: "subs_plans_features",
+                column: "feature_id");
 
             migrationBuilder.CreateIndex(
                 name: "IX_subs_portal_sessions_expiration",
@@ -518,7 +520,7 @@ namespace BTCPayServer.Migrations
                 name: "subs_plan_checkouts");
 
             migrationBuilder.DropTable(
-                name: "subs_plans_entitlements");
+                name: "subs_plans_features");
 
             migrationBuilder.DropTable(
                 name: "subs_portal_sessions");
@@ -530,7 +532,7 @@ namespace BTCPayServer.Migrations
                 name: "subscriber_invoices");
 
             migrationBuilder.DropTable(
-                name: "subs_entitlements");
+                name: "subs_features");
 
             migrationBuilder.DropTable(
                 name: "subs_subscriber_credits");

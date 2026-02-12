@@ -1,6 +1,5 @@
-﻿@using BTCPayServer.Client.Models
+﻿@using BTCPayServer.Plugins.Subscriptions
 @using BTCPayServer.Services
-@using BTCPayServer.Services.Invoices
 @using NBXplorer
 @model SubscriberPortalViewModel
 @inject DisplayFormatter DisplayFormatter
@@ -16,18 +15,6 @@
 
     string FormatDays(int days)
         => days is 1 or 0 ? StringLocalizer["{0} day", days] : StringLocalizer["{0} days", days];
-
-    private static string RecurringToString(PlanData.RecurringInterval type)
-    {
-        return type switch
-        {
-            PlanData.RecurringInterval.Lifetime => "Lifetime",
-            PlanData.RecurringInterval.Monthly => "per month",
-            PlanData.RecurringInterval.Quarterly => "per quarter",
-            PlanData.RecurringInterval.Yearly => "per year",
-            _ => throw new NotSupportedException()
-        };
-    }
 }
 
 @{
@@ -209,21 +196,16 @@
     <div class="container-fluid">
         <div class="d-flex align-items-center">
             <div class="company-logo me-3">
-                @if (Model.StoreBranding.LogoUrl is null)
-                {
-                    <img src="~/img/btcpay-logo.svg" alt="@Model.StoreName" />
-                }
-                else
-                {
-                    <img src="@Model.StoreBranding.LogoUrl" alt="@Model.StoreName" />
-                }
+                <a href="@Model.Url" class="text-decoration-none" target="_blank">
+                    <img src="@Model.Logo" alt="@Model.StoreName" />
+                </a>
             </div>
-            <span class="navbar-brand mb-0 h1">@Model.StoreName</span>
+            <a href="@Model.Url" target="_blank" class="navbar-brand mb-0 h1 text-decoration-none">@Model.StoreName</a>
         </div>
         <div class="d-flex align-items-center gap-3">
             @if (Model.Subscriber.TestAccount)
             {
-                @if (Model.Subscriber.GetReminderDate() is var o && DateTimeOffset.UtcNow < o)
+                @if (DateTimeOffset.UtcNow < Model.Subscriber.ReminderDate)
                 {
                     <form id="MoveToReminder"
                           asp-action="MoveTime"
@@ -313,7 +295,7 @@
                 {
                     <div class="col-md-4 text-md-end">
                         <h4 class="mb-1">@DisplayFormatter.Currency(Model.Plan.Price, Model.Plan.Currency, DisplayFormatter.CurrencyFormat.Symbol)</h4>
-                        <p class="text-muted mb-0">@RecurringToString(Model.Plan.RecurringType)</p>
+                        <p class="text-muted mb-0">@StringLocalizer.RecurringToString(Model.Plan.RecurringType)</p>
                     </div>
                 }
             </div>
@@ -362,8 +344,7 @@
             <partial name="NextAction" model="@("btn btn-info", Model.Subscriber)" />
         </div>
     }
-    else if (Model.Subscriber.GetReminderDate() is { } reminderDate2 &&
-             reminderDate2 < DateTimeOffset.UtcNow &&
+    else if (Model.Subscriber.ReminderDate < DateTimeOffset.UtcNow &&
              !Model.Subscriber.IsNextPlanRenewable)
     {
         <div class="alert-translucent alert-warning">
@@ -377,8 +358,7 @@
             <partial name="NextAction" model="@("btn btn-warning", Model.Subscriber)" />
         </div>
     }
-    else if (Model.Subscriber.GetReminderDate() is { } reminderDate &&
-             reminderDate < DateTimeOffset.UtcNow &&
+    else if (Model.Subscriber.ReminderDate < DateTimeOffset.UtcNow &&
              Model.Subscriber.MissingCredit() != 0)
     {
         @if (daysRemaining == 0)
@@ -448,11 +428,22 @@
                             <div class="text-muted">Plan price</div>
                             <div>@DisplayFormatter.Currency(Model.Subscriber.Plan.Price, Model.Subscriber.Plan.Currency, DisplayFormatter.CurrencyFormat.Symbol)</div>
                         </div>
-                        <div class="d-flex justify-content-between credit-applied">
-                            <div class="text-muted">Credit applied</div>
-                            <div class="text-success">
-                                - @DisplayFormatter.Currency(Model.Credit.CreditApplied, Model.Credit.Currency, DisplayFormatter.CurrencyFormat.Symbol)</div>
-                        </div>
+                        @if (Model.Credit.CreditApplied > 0m)
+                        {
+                            <div class="d-flex justify-content-between credit-applied">
+                                <div class="text-muted">Credit applied</div>
+                                <div class="text-success">
+                                    - @DisplayFormatter.Currency(Model.Credit.CreditApplied, Model.Credit.Currency, DisplayFormatter.CurrencyFormat.Symbol)</div>
+                            </div>
+                        }
+                        @if (Model.Credit.CreditApplied < 0m)
+                        {
+                            <div class="d-flex justify-content-between credit-past-due">
+                                <div class="text-muted">Past due</div>
+                                <div class="text-danger">
+                                    - @DisplayFormatter.Currency((-Model.Credit.CreditApplied), Model.Credit.Currency, DisplayFormatter.CurrencyFormat.Symbol)</div>
+                            </div>
+                        }
                         <div class="d-flex justify-content-between fw-semibold credit-next-charge">
                             <div>Next charge on @date</div>
                             <div>@DisplayFormatter.Currency(Model.Credit.NextCharge, Model.Credit.Currency, DisplayFormatter.CurrencyFormat.Symbol)</div>
@@ -501,7 +492,7 @@
                                     <div class="col-md-4" data-plan-name="@plan.Name">
                                         <div class="current-plan">
                                             <h6 class="mb-1 changeplan-title">@plan.Name</h6>
-                                            <p class="text-muted mb-2"><span>@DisplayFormatter.Currency(plan.Price, plan.Currency, DisplayFormatter.CurrencyFormat.Symbol)</span> <span>@RecurringToString(plan.RecurringType)</span></p>
+                                            <p class="text-muted mb-2"><span>@DisplayFormatter.Currency(plan.Price, plan.Currency, DisplayFormatter.CurrencyFormat.Symbol)</span> <span>@StringLocalizer.RecurringToString(plan.RecurringType)</span></p>
                                             <span class="badge bg-primary">Current</span>
                                         </div>
                                     </div>
@@ -512,7 +503,7 @@
                                          data-plan-name="@plan.Name"
                                          data-plan-id="@plan.PlanId">
                                         <h6 class="mb-1 changeplan-title">@plan.Name</h6>
-                                        <p class="text-muted mb-2"><span>@DisplayFormatter.Currency(plan.Price, plan.Currency, DisplayFormatter.CurrencyFormat.Symbol)</span> <span>@RecurringToString(plan.RecurringType)</span></p>
+                                        <p class="text-muted mb-2"><span>@DisplayFormatter.Currency(plan.Price, plan.Currency, DisplayFormatter.CurrencyFormat.Symbol)</span> <span>@StringLocalizer.RecurringToString(plan.RecurringType)</span></p>
 
                                             <input type="hidden" name="changedPlanId" value="@plan.PlanId" />
                                             @if (plan.ChangeType == PlanChangeData.ChangeType.Upgrade)

@@ -40,10 +40,12 @@ namespace BTCPayServer.Services.Apps
         private static JsonSerializerSettings _defaultSerializer;
 
         readonly ApplicationDbContextFactory _ContextFactory;
+        public ApplicationDbContextFactory ContextFactory => _ContextFactory;
         private readonly InvoiceRepository _InvoiceRepository;
         readonly CurrencyNameTable _Currencies;
         private readonly StoreRepository _storeRepository;
         private readonly EventAggregator _eventAggregator;
+        public EventAggregator EventAggregator => _eventAggregator;
         public CurrencyNameTable Currencies => _Currencies;
         private readonly string[] _paidStatuses = [
             InvoiceStatus.Processing.ToString(),
@@ -341,9 +343,9 @@ namespace BTCPayServer.Services.Apps
             return await query.FirstOrDefaultAsync();
         }
 
-        public Task<StoreData?> GetStore(AppData app)
+        public async Task<StoreData> GetStore(AppData app)
         {
-            return _storeRepository.FindStore(app.StoreDataId);
+            return await _storeRepository.FindStore(app.StoreDataId) ?? throw new Exception("App's store is not found");
         }
 
         public static string SerializeTemplate(AppItem[] items)

@@ -1,6 +1,7 @@
 ﻿#nullable  enable
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Client.Models;
@@ -34,26 +35,30 @@ public class SubscriptionContext(ApplicationDbContext ctx, EventAggregator aggre
     public async Task<decimal> CreditSubscriber(SubscriberData sub, string description, decimal credit)
     => (await TryCreditDebitSubscriber(sub, description, credit, 0m, true))!.Value;
 
-    public async Task<bool> TryChargeSubscriber(SubscriberData sub, string description, decimal charge, bool force = false)
-    => (await TryCreditDebitSubscriber(sub, description, 0m, charge, force)) is not null;
+    public async Task<bool> TryChargeSubscriber(SubscriberData sub, string description, decimal charge, bool allowOverdraft = false)
+    => (await TryCreditDebitSubscriber(sub, description, 0m, charge, allowOverdraft)) is not null;
 
     private static async Task<decimal?> UpdateCredit(BalanceTransaction tx, bool force, ApplicationDbContext ctx)
     {
         var diff = tx.Diff;
         if (diff >= 0)
             force = true;
-        var amountCondition = force ? "1=1" : "c.amount >= -@diff";
+        var amountCondition = force ? "1=1" : "new_amount >= 0";
 
         var amount = await ctx.Database.GetDbConnection()
             .ExecuteScalarAsync<decimal?>($"""
                                            WITH
+                                           change AS (
+                                                SELECT o.id, o.currency,  COALESCE(c.amount, 0) + o.diff AS new_amount
+                                                FROM (SELECT @id id, @currency currency, @diff diff) AS o
+                                                LEFT JOIN subs_subscriber_credits c ON c.subscriber_id = o.id AND c.currency = o.currency
+                                           ),
                                            up AS (
                                                INSERT INTO subs_subscriber_credits AS c (subscriber_id, currency, amount)
-                                               VALUES (@id, @currency, @diff)
+                                               SELECT id, currency, new_amount FROM change
+                                               WHERE {amountCondition}
                                                ON CONFLICT (subscriber_id, currency)
-                                               DO UPDATE
-                                                   SET amount = c.amount + EXCLUDED.amount
-                                                   WHERE {amountCondition}
+                                               DO UPDATE SET amount = EXCLUDED.amount
                                                RETURNING c.subscriber_id, c.currency, @diff AS diff, c.amount AS balance
                                            ),
                                            hist AS (
@@ -80,27 +85,38 @@ public class SubscriptionContext(ApplicationDbContext ctx, EventAggregator aggre
         await ctx.Entry(sub).Collection(c => c.Credits).Query().LoadAsync();
     }
 
-    public async Task<decimal?> TryCreditDebitSubscriber(SubscriberData sub, string description, decimal credit, decimal charge, bool force = false)
+    public async Task<decimal?> TryCreditDebitSubscriber(SubscriberData sub, string description, decimal credit, decimal charge, bool allowOverdraft = false, string? currency = null)
     {
-        charge = RoundAmount(charge, sub.Plan.Currency);
-        credit = RoundAmount(credit, sub.Plan.Currency);
-        var tx = new BalanceTransaction(sub.Id, sub.Plan.Currency, credit, charge, description);
-        var amount = await UpdateCredit(tx, force, ctx);
+        currency ??= sub.Plan.Currency;
+        currency = currency.ToUpperInvariant().Trim();
+        charge = RoundAmount(charge, currency);
+        credit = RoundAmount(credit, currency);
+        var tx = new BalanceTransaction(sub.Id, currency, credit, charge, description);
+        var amount = await UpdateCredit(tx, allowOverdraft, ctx);
         await ReloadCredits(sub, ctx);
         if (amount is { } newTotal)
         {
             if (tx.Credit != 0)
-                AddEvent(new SubscriptionEvent.SubscriberCredited(sub, newTotal + tx.Debit, tx.Credit, sub.Plan.Currency));
+                AddEvent(new SubscriptionEvent.SubscriberCredited(sub, newTotal + tx.Debit, tx.Credit, currency));
             if (tx.Debit != 0)
-                AddEvent(new SubscriptionEvent.SubscriberDebited(sub, newTotal, tx.Debit, sub.Plan.Currency));
+                AddEvent(new SubscriptionEvent.SubscriberDebited(sub, newTotal, tx.Debit, currency));
         }
         return amount;
     }
 
     public async ValueTask DisposeAsync()
     {
+        var plans =
+            _evts.OfType<SubscriptionEvent.SubscriberEvent>()
+                .SelectMany(s => s.Subscriber.Offering.Plans)
+                .Where(p => !p.FeaturesLoaded)
+                .ToList();
+        await ctx.Plans.FetchPlanFeaturesAsync(plans);
         foreach (var evt in _evts)
+        {
             aggregator.Publish(evt, evt.GetType());
+        }
+
         await ctx.DisposeAsync();
     }
 }

@@ -38,7 +38,7 @@ public class SubscriptionHostedService(
 {
     record Poll;
 
-    public record SubscribeRequest(string CheckoutId, CustomerSelector CustomerSelector);
+    public record SubscribeRequest(string CheckoutId);
 
     public Task Do(CancellationToken cancellationToken)
         => base.RunEvent(new Poll(), cancellationToken);
@@ -85,23 +85,21 @@ public class SubscriptionHostedService(
             var checkout = await ctx.PlanCheckouts.GetCheckout(subscribeRequest.CheckoutId);
             if (checkout?.IsExpired is not false)
                 throw new InvalidOperationException("Checkout not found or expired");
-            var redirectLink =
-                checkout.GetRedirectUrl() ??
-                checkout.Plan.Offering.SuccessRedirectUrl ??
-                linkGenerator.PlanCheckoutDefaultLink(checkout.BaseUrl);
-            if (checkout.SuccessRedirectUrl != redirectLink)
+            if (checkout.SuccessRedirectUrl is null)
             {
+                var redirectLink = checkout.Plan.Offering.SuccessRedirectUrl ??
+                                   linkGenerator.PlanCheckoutDefaultLink(checkout.BaseUrl);
                 checkout.SuccessRedirectUrl = redirectLink;
                 await ctx.SaveChangesAsync();
             }
 
             if (checkout.IsTrial)
             {
-                await StartPlanCheckoutWithoutInvoice(subCtx, checkout, subscribeRequest.CustomerSelector);
+                await StartPlanCheckoutWithoutInvoice(subCtx, checkout);
             }
             else
             {
-                await CreateInvoiceForCheckout(subCtx, checkout, subscribeRequest.CustomerSelector);
+                await CreateInvoiceForCheckout(subCtx, checkout);
             }
         }
         else if (evt is SuspendRequest suspendRequest)
@@ -128,6 +126,8 @@ public class SubscriptionHostedService(
                     member.TrialEnd -= move.Period;
                 if (member.GracePeriodEnd is not null)
                     member.GracePeriodEnd -= move.Period;
+                if (member.ReminderDate is not null)
+                    member.ReminderDate -= move.Period;
                 member.PlanStarted -= move.Period;
             }
 
@@ -144,7 +144,7 @@ public class SubscriptionHostedService(
     public static string GetCheckoutPlanTag(string checkoutId) => $"SUBS#{checkoutId}";
     public static string? GetCheckoutPlanIdFromInvoice(InvoiceEntity invoiceEntiy) => invoiceEntiy.GetInternalTags("SUBS#").FirstOrDefault();
 
-    private async Task CreateInvoiceForCheckout(SubscriptionContext subCtx, PlanCheckoutData checkout, CustomerSelector customerSelector, decimal? price = null)
+    private async Task CreateInvoiceForCheckout(SubscriptionContext subCtx, PlanCheckoutData checkout)
     {
         var invoiceMetadata = JObject.Parse(checkout.InvoiceMetadata);
         if (checkout.NewSubscriber)
@@ -152,12 +152,12 @@ public class SubscriptionHostedService(
             invoiceMetadata["planId"] = checkout.PlanId;
             invoiceMetadata["offeringId"] = checkout.Plan.OfferingId;
         }
-        if (GetBuyerEmail(checkout, customerSelector) is string email)
+        if (checkout.GetEmail() is string email && !invoiceMetadata.ContainsKey("buyerEmail"))
             invoiceMetadata["buyerEmail"] = email;
 
         var plan = checkout.Plan;
         var existingCredit = checkout.Subscriber?.GetCredit() ?? 0m;
-        var amount = price ?? (plan.Price - existingCredit);
+        var amount = checkout.CreditPurchase ?? (plan.Price - existingCredit);
         if (checkout.OnPay == PlanCheckoutData.OnPayBehavior.HardMigration &&
             checkout.Subscriber?.GetUnusedPeriodAmount(subCtx.Now) is decimal unusedAmount)
             amount -= subCtx.RoundAmount(unusedAmount, plan.Currency);
@@ -192,17 +192,13 @@ public class SubscriptionHostedService(
         }
         else
         {
-            await StartPlanCheckoutWithoutInvoice(subCtx, checkout, customerSelector);
+            await StartPlanCheckoutWithoutInvoice(subCtx, checkout);
         }
     }
 
-    private static string? GetBuyerEmail(PlanCheckoutData checkout, CustomerSelector customerSelector)
-    => customerSelector is CustomerSelector.Identity { Type: "Email", Value: { } email }
-        ? email
-        : checkout.Subscriber?.Customer.Email.Get();
-
     class MembershipServerSettings
     {
+        // ReSharper disable once UnusedMember.Local
         public MembershipServerSettings()
         {
         }
@@ -228,10 +224,10 @@ public class SubscriptionHostedService(
         {
             public override IQueryable<SubscriberData> Where(IQueryable<SubscriberData> query)
                 => From is null
-                    ? query.Where(q => (q.PeriodEnd < To || q.GracePeriodEnd < To || q.TrialEnd < To))
+                    ? query.Where(q => (q.PeriodEnd < To || q.GracePeriodEnd < To || q.TrialEnd < To || q.ReminderDate < To))
                     : query.Where(q =>
                         (q.PeriodEnd >= From && q.PeriodEnd < To) || (q.GracePeriodEnd >= From && q.GracePeriodEnd < To) ||
-                        (q.TrialEnd >= From && q.TrialEnd < To));
+                        (q.TrialEnd >= From && q.TrialEnd < To) || (q.ReminderDate >= From && q.ReminderDate < To));
         }
 
         public abstract IQueryable<SubscriberData> Where(IQueryable<SubscriberData> query);
@@ -245,20 +241,16 @@ public class SubscriptionHostedService(
         var (now, ctx, cancellationToken) = (subCtx.Now, subCtx.Context, subCtx.CancellationToken);
         var query = ctx.Subscribers.IncludeAll();
         var members = await selector.Where(query).ToListAsync(cancellationToken);
-        await ctx.PlanEntitlements.FetchPlanEntitlementsAsync(members.Select(m => m.Plan));
+        await ctx.PlanFeatures.FetchPlanFeaturesAsync(members.Select(m => m.Plan));
         foreach (var m in members)
         {
             var newPhase = m.GetExpectedPhase(now);
             var (prevPhase, prevActive) = (m.Phase, m.IsActive);
             if (prevPhase != newPhase)
             {
-                if (newPhase is PhaseTypes.Expired or PhaseTypes.Grace)
+                if (newPhase is PhaseTypes.Expired or PhaseTypes.Grace && m.AutoRenew)
                 {
-                    if (m is
-                        {
-                            CanStartNextPlan: true,
-                            AutoRenew: true
-                        })
+                    if (m.CanStartNextPlanEx(false, newPhase))
                     {
                         if (await subCtx.TryChargeSubscriber(m, $"Auto renewal for plan '{m.NextPlan.Name}'", m.NextPlan.Price))
                         {
@@ -272,7 +264,7 @@ public class SubscriptionHostedService(
                             });
                         }
                     }
-                    else if (m is { AutoRenew: true, CanStartNextPlan: false })
+                    else if (!m.IsSuspended)
                     {
                         subCtx.AddEvent(new SubscriptionEvent.NeedUpgrade(m));
                     }
@@ -295,9 +287,9 @@ public class SubscriptionHostedService(
                 }
             }
 
-            var needReminder = m.GetReminderDate() <= now &&
+            var needReminder = m.ReminderDate <= now &&
                                !m.PaymentReminded &&
-                               m.MissingCredit() >= 0m;
+                               m.MissingCredit() > 0m;
             if (needReminder)
             {
                 m.PaymentReminded = true;
@@ -351,10 +343,10 @@ public class SubscriptionHostedService(
         return plansToUpdate;
     }
 
-    public Task ProceedToSubscribe(string checkoutId, CustomerSelector selector, CancellationToken cancellationToken)
-    => RunEvent(new SubscribeRequest(checkoutId, selector), cancellationToken);
+    public Task ProceedToSubscribe(string checkoutId, CancellationToken cancellationToken)
+    => RunEvent(new SubscribeRequest(checkoutId), cancellationToken);
 
-    private async Task StartPlanCheckoutWithoutInvoice(SubscriptionContext subCtx, PlanCheckoutData checkout, CustomerSelector customerSelector)
+    private async Task StartPlanCheckoutWithoutInvoice(SubscriptionContext subCtx, PlanCheckoutData checkout)
     {
         var ctx = subCtx.Context;
         var sub = checkout.Subscriber;
@@ -363,7 +355,7 @@ public class SubscriptionHostedService(
 
         if (sub is null)
         {
-            sub = await CreateSubscription(subCtx, checkout, false, customerSelector);
+            sub = await CreateSubscription(subCtx, checkout, false);
             if (sub is null)
                 return;
         }
@@ -376,7 +368,7 @@ public class SubscriptionHostedService(
 
     private async Task ProcessSubscriptionPayment(InvoiceEntity invoice, string checkoutId, CancellationToken cancellationToken = default)
     {
-        bool needUpdate = false;
+        var needUpdate = false;
         await using var subCtx = CreateContext(cancellationToken);
         var ctx = subCtx.Context;
         var checkout = await ctx.PlanCheckouts.GetCheckout(checkoutId);
@@ -407,7 +399,7 @@ public class SubscriptionHostedService(
             if (sub is null)
             {
                 var optimisticActivation = invoice.Status == InvoiceStatus.Processing && plan.OptimisticActivation;
-                sub = await CreateSubscription(subCtx, checkout, optimisticActivation, CustomerSelector.ByEmail(invoice.Metadata.BuyerEmail));
+                sub = await CreateSubscription(subCtx, checkout, optimisticActivation);
                 if (sub is null)
                     return;
 
@@ -420,23 +412,19 @@ public class SubscriptionHostedService(
             }
 
             var invoiceCredit = subCtx.GetAmountToCredit(invoice);
-            if (checkout.Credited != invoiceCredit)
+            if (checkout.CreditedByInvoice != invoiceCredit)
             {
-                var diff = invoiceCredit - checkout.Credited;
+                var diff = invoiceCredit - checkout.CreditedByInvoice;
                 if (diff > 0)
                 {
-                    checkout.Credited += diff;
+                    checkout.CreditedByInvoice += diff;
                     await subCtx.CreditSubscriber(sub, $"Credit purchase (Inv: {invoice.Id})", diff);
-
-                    if (!checkout.PlanStarted)
-                    {
-                        await TryStartPlan(subCtx, checkout, sub);
-                    }
+                    await TryStartPlan(subCtx, checkout, sub);
                 }
                 else
                 {
-                    await subCtx.TryChargeSubscriber(sub, $"Adjustement (Inv: {invoice.Id})", -diff, force: true);
-                    checkout.Credited -= -diff;
+                    await subCtx.TryChargeSubscriber(sub, $"Adjustement (Inv: {invoice.Id})", -diff, allowOverdraft: true);
+                    checkout.CreditedByInvoice -= -diff;
                 }
             }
 
@@ -448,7 +436,7 @@ public class SubscriptionHostedService(
             await ctx.SaveChangesAsync();
         }
         else if (sub is not null && invoice.Status == InvoiceStatus.Invalid &&
-                 checkout is { PlanStarted: true, Credited: not 0m })
+                 checkout is { PlanStarted: true, CreditedByInvoice: not 0m })
         {
             // We should probably ask the merchant before reversing the credit...
             // await TryChargeSubscriber(ctx, sub, checkout.Credited, force: true);
@@ -483,7 +471,7 @@ public class SubscriptionHostedService(
             }
         }
         // In hard migrations, we stop the current plan by reimbursing what has
-        // not yet been spent. The we start the new plan.
+        // not yet been spent. We start the new plan.
         else if (checkout.OnPay == PlanCheckoutData.OnPayBehavior.HardMigration)
         {
             var unusedAmount = subCtx.RoundAmount(sub.GetUnusedPeriodAmount(now) ?? 0.0m, sub.Plan.Currency);
@@ -536,20 +524,23 @@ public class SubscriptionHostedService(
         else if (phase == PhaseTypes.Grace)
             time = subscriber.PeriodEnd!.Value - DateTimeOffset.UtcNow;
         else if (phase == PhaseTypes.Expired)
-            time = subscriber.GracePeriodEnd!.Value - DateTimeOffset.UtcNow;
+            time = (subscriber.GracePeriodEnd ?? subscriber.PeriodEnd)!.Value - DateTimeOffset.UtcNow;
         else
             throw new InvalidOperationException("Invalid phase");
 
         await this.MoveTime(selector, time);
     }
 
-    private async Task<SubscriberData?> CreateSubscription(SubscriptionContext subCtx, PlanCheckoutData checkout, bool optimisticActivation,
-        CustomerSelector customerSelector)
+    private async Task<SubscriberData?> CreateSubscription(SubscriptionContext subCtx, PlanCheckoutData checkout, bool optimisticActivation)
     {
         var ctx = subCtx.Context;
         var plan = checkout.Plan;
-        var cust = await ctx.Customers.GetOrUpdate(checkout.Plan.Offering.App.StoreDataId, customerSelector);
-        (var sub, var created) =
+
+        var email = checkout.GetEmail();
+        if (email is null)
+            return null;
+        var cust = await ctx.Customers.GetOrUpdate(checkout.Plan.Offering.App.StoreDataId, CustomerSelector.ByEmail(email));
+        var (sub, created) =
             await ctx.Subscribers.GetOrCreateByCustomerId(cust.Id, plan.OfferingId, plan.Id, optimisticActivation, checkout.TestAccount,
                 JObject.Parse(checkout.NewSubscriberMetadata));
         if (!created || sub is null)
@@ -557,11 +548,11 @@ public class SubscriptionHostedService(
         checkout.Subscriber = sub;
         checkout.SubscriberId = sub.Id;
         await ctx.SaveChangesAsync();
-        subCtx.AddEvent(new SubscriptionEvent.NewSubscriber(sub));
+        subCtx.AddEvent(new SubscriptionEvent.NewSubscriber(sub, checkout.BaseUrl));
         return sub;
     }
 
-    private static async Task UpdatePlanStats(ApplicationDbContext ctx, string planId)
+    public static async Task UpdatePlanStats(ApplicationDbContext ctx, string planId)
     {
         await ctx.Database.GetDbConnection()
             .ExecuteAsync("""
@@ -598,16 +589,30 @@ public class SubscriptionHostedService(
 
     public Task Suspend(long subId, string? suspensionReason)
         => RunEvent(new SuspendRequest(subId, suspensionReason, true));
+    public Task Unsuspend(long subId)
+        => RunEvent(new SuspendRequest(subId, null, false));
 
-    public async Task UpdateCredit(long subscriberId, string description, decimal update)
+    public class UpdateCreditParameters
+    {
+        public long SubscriberId { get; set; }
+        public string? Description { get; set; }
+        public bool AllowOverdraft { get; set; }
+        public decimal Credit { get; set; }
+        public decimal Charge { get; set; }
+        public string? Currency { get; set; }
+    }
+
+    public async Task<decimal?> UpdateCredit(UpdateCreditParameters parameters)
     {
         await using var subCtx = CreateContext();
-        var sub = await subCtx.Context.Subscribers.GetById(subscriberId);
-        if (sub is null) return;
-        if (update < 0)
-            await subCtx.TryChargeSubscriber(sub, description, -update, force: true);
-        else if (update > 0)
-            await subCtx.CreditSubscriber(sub, description, update);
+        var sub = await subCtx.Context.Subscribers.GetById(parameters.SubscriberId);
+        if (sub is null) return null;
+        return await subCtx.TryCreditDebitSubscriber(sub,
+            parameters.Description ?? "No description",
+            parameters.Credit,
+            parameters.Charge,
+            parameters.AllowOverdraft,
+            parameters.Currency);
     }
 
 
@@ -622,11 +627,12 @@ public class SubscriptionHostedService(
         var checkout = new PlanCheckoutData(portal.Subscriber)
         {
             SuccessRedirectUrl = linkGenerator.SubscriberPortalLink(portalSessionId, portal.BaseUrl),
+            CreditPurchase = value,
             BaseUrl = portal.BaseUrl
         };
         ctx.PlanCheckouts.Add(checkout);
         await ctx.SaveChangesAsync();
-        await this.CreateInvoiceForCheckout(subCtx, checkout, portal.Subscriber.CustomerSelector, value);
+        await this.CreateInvoiceForCheckout(subCtx, checkout);
         return checkout.InvoiceId;
     }
 

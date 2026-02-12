@@ -46,8 +46,6 @@ namespace BTCPayServer.Services.Stores
 
         public async Task<StoreData?> FindStore(string storeId)
         {
-            if (storeId == null)
-                return null;
             await using var ctx = _ContextFactory.CreateContext();
             var result = await ctx.FindAsync<StoreData>(storeId).ConfigureAwait(false);
             return result;
@@ -314,6 +312,7 @@ namespace BTCPayServer.Services.Stores
             try
             {
                 await ctx.SaveChangesAsync();
+                await ctx.Users.UpdateStoreNoActiveUserForStores([storeId]);
                 _eventAggregator.Publish(new StoreUserEvent.Added(storeId, userId, roleId.Id));
                 return true;
             }
@@ -410,20 +409,6 @@ namespace BTCPayServer.Services.Stores
                 store.ApplicationUserId != userId);
         }
 
-        private async Task DeleteStoreIfOrphan(string storeId)
-        {
-            await using var ctx = _ContextFactory.CreateContext();
-            if (!await ctx.UserStore.Where(u => u.StoreDataId == storeId && u.StoreRole.Permissions.Contains(Policies.CanModifyStoreSettings)).AnyAsync())
-            {
-                var store = await ctx.Stores.FindAsync(storeId);
-                if (store != null)
-                {
-                    ctx.Stores.Remove(store);
-                    await ctx.SaveChangesAsync();
-                    _eventAggregator.Publish(new StoreEvent.Removed(store));
-                }
-            }
-        }
         public async Task CreateStore(string ownerId, StoreData storeData, StoreRoleId? roleId = null)
         {
             if (!string.IsNullOrEmpty(storeData.Id))
@@ -474,14 +459,17 @@ namespace BTCPayServer.Services.Stores
         {
             using var ctx = _ContextFactory.CreateContext();
             ctx.WebhookDeliveries.Add(delivery);
-            var invoiceWebhookDelivery = delivery.GetBlob().ReadRequestAs<InvoiceWebhookDeliveryData>();
-            if (invoiceWebhookDelivery.InvoiceId != null)
+            if (delivery.GetBlob() is { } blob)
             {
-                ctx.InvoiceWebhookDeliveries.Add(new InvoiceWebhookDeliveryData()
+                var invoiceWebhookDelivery = blob.ReadRequestAs<InvoiceWebhookDeliveryData>();
+                if (invoiceWebhookDelivery.InvoiceId != null)
                 {
-                    InvoiceId = invoiceWebhookDelivery.InvoiceId,
-                    DeliveryId = delivery.Id
-                });
+                    ctx.InvoiceWebhookDeliveries.Add(new InvoiceWebhookDeliveryData()
+                    {
+                        InvoiceId = invoiceWebhookDelivery.InvoiceId,
+                        DeliveryId = delivery.Id
+                    });
+                }
             }
             await ctx.SaveChangesAsync();
         }
@@ -584,8 +572,8 @@ namespace BTCPayServer.Services.Stores
                     return;
                 ctx.UserStore.Remove(storeUser);
                 await ctx.SaveChangesAsync();
+                await ctx.Users.UpdateStoreNoActiveUserForStores([storeId]);
             }
-            await DeleteStoreIfOrphan(storeId);
         }
 
         public async Task UpdateStore(StoreData store)
@@ -595,6 +583,17 @@ namespace BTCPayServer.Services.Stores
             if (existing is not null)
             {
                 ctx.Entry(existing).CurrentValues.SetValues(store);
+                await ctx.SaveChangesAsync().ConfigureAwait(false);
+                _eventAggregator.Publish(new StoreEvent.Updated(store));
+            }
+        }
+        public async Task UpdateStoreBlob(StoreData store)
+        {
+            using var ctx = _ContextFactory.CreateContext();
+            var existing = await ctx.FindAsync<StoreData>(store.Id);
+            if (existing is not null)
+            {
+                existing.SetStoreBlob(store.GetStoreBlob());
                 await ctx.SaveChangesAsync().ConfigureAwait(false);
                 _eventAggregator.Publish(new StoreEvent.Updated(store));
             }

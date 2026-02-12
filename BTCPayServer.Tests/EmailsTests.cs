@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Plugins.Emails.Controllers;
@@ -213,7 +214,7 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
     }
 
     [Fact]
-    [Trait("Playwright", "Playwright")]
+    [Trait("Playwright", "Playwright-2")]
     public async Task CanSetupEmailRules()
     {
         await using var s = CreatePlaywrightTester(newDb: true);
@@ -223,8 +224,8 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
 
         await s.GoToStore(StoreNavPages.Emails);
         await s.Page.ClickAsync("#ConfigureEmailRules");
-        Assert.Contains("There are no rules yet.", await s.Page.ContentAsync());
-        Assert.Contains("You need to configure email settings before this feature works", await s.Page.ContentAsync());
+        await AssertNeedToConfigureEmailSettings(s);
+        await AssertNoRules(s);
 
         await s.Page.ClickAsync(".configure-email");
 
@@ -307,7 +308,7 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.ConfirmDeleteModal();
 
         await s.FindAlertMessage();
-        Assert.Contains("There are no rules yet.", await s.Page.ContentAsync());
+        await AssertNoRules(s);
 
         await s.Page.ClickAsync("#CreateEmailRule");
 
@@ -345,6 +346,11 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         Assert.Contains("<p>Hello, <a id=\"reset-link\" href=\"http://", message.Html);
     }
 
+    private static async Task AssertNoRules(PlaywrightTester s)
+    {
+        await s.Page.Locator("text=There are no rules yet.").WaitForAsync();
+    }
+
     [Fact]
     [Trait("Playwright", "Playwright")]
     public async Task CanSetupEmailServer()
@@ -371,7 +377,7 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.GoToStore(StoreNavPages.Emails);
         Assert.Equal(0, await s.Page.Locator("#IsCustomSMTP").CountAsync());
         await s.Page.ClickAsync("#ConfigureEmailRules");
-        Assert.Contains("You need to configure email settings before this feature works", await s.Page.ContentAsync());
+        await AssertNeedToConfigureEmailSettings(s);
 
         // Server Emails
         await s.GoToUrl("/server/emails");
@@ -396,7 +402,7 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
 
         // Store Email Rules
         await s.Page.ClickAsync("#ConfigureEmailRules");
-        await s.Page.Locator("text=There are no rules yet.").WaitForAsync();
+        await AssertNoRules(s);
         Assert.DoesNotContain("id=\"SaveEmailRules\"", await s.Page.ContentAsync());
         Assert.DoesNotContain("You need to configure email settings before this feature works", await s.Page.ContentAsync());
 
@@ -418,6 +424,11 @@ public class EmailsTests(ITestOutputHelper helper) : UnitTestBase(helper)
 
         await s.GoToStore(StoreNavPages.Emails);
         Assert.True(await s.Page.Locator("#IsCustomSMTP").IsCheckedAsync());
+    }
+
+    private async Task AssertNeedToConfigureEmailSettings(PlaywrightTester s)
+    {
+        await s.FindAlertMessage(partialText: "You need to configure email settings before this feature works", severity: StatusMessageModel.StatusSeverity.Warning);
     }
 
     private static async Task CanSetupEmailCore(PlaywrightTester s)
