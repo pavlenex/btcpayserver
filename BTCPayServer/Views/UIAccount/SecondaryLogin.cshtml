@@ -1,4 +1,4 @@
-﻿@model SecondaryLoginViewModel
+@model SecondaryLoginViewModel
 @{
     ViewData["Title"] = "Two-factor/U2F authentication";
     Layout = "_LayoutSignedOut";
@@ -6,7 +6,49 @@
 }
 
 @section PageHeadContent {
-    <style>.twoFaBox + .twoFaBox { margin-top: var(--btcpay-space-l); padding-top: var(--btcpay-space-l); border-top: 1px solid var(--btcpay-body-border-light); }</style>
+    <style>
+        .auth-method {
+            border: 1px solid var(--btcpay-body-border-light);
+            border-radius: var(--btcpay-border-radius-l);
+            padding: var(--btcpay-space-l);
+        }
+        .auth-method-header {
+            display: flex;
+            align-items: center;
+            gap: var(--btcpay-space-s);
+            margin-bottom: var(--btcpay-space-s);
+        }
+        .auth-method-header .icon {
+            --icon-size: 1.5rem;
+            color: var(--btcpay-body-text-muted);
+        }
+        .auth-method-header h2 {
+            margin-bottom: 0;
+        }
+        .auth-method-description {
+            color: var(--btcpay-body-text-muted);
+            font-size: var(--btcpay-font-size-s);
+            margin-bottom: var(--btcpay-space-m);
+        }
+        .auth-or-separator {
+            display: flex;
+            align-items: center;
+            gap: var(--btcpay-space-m);
+            margin: var(--btcpay-space-l) 0;
+            color: var(--btcpay-body-text-muted);
+            font-size: var(--btcpay-font-size-s);
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+        .auth-or-separator::before,
+        .auth-or-separator::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--btcpay-body-border-light);
+        }
+    </style>
 }
 
 @section PageFootContent {
@@ -27,14 +69,25 @@ else if (Model.LoginWith2FaViewModel == null && Model.LoginWithFido2ViewModel ==
     </div>
 }
 
-<div class="row justify-content-center">
+<h4 class="mb-2" text-translate="true">Verify your identity</h4>
+<p class="text-secondary mb-4" text-translate="true">Choose one of the following methods to complete sign-in.</p>
+
+<div>
     @if (Model.LoginWith2FaViewModel != null)
     {
         <partial name="LoginWith2fa" model="@Model.LoginWith2FaViewModel"/>
     }
+    @if (Model.LoginWith2FaViewModel != null && (Model.LoginWithFido2ViewModel != null || Model.LoginWithLNURLAuthViewModel != null))
+    {
+        <div class="auth-or-separator" text-translate="true">or</div>
+    }
     @if (Model.LoginWithFido2ViewModel != null)
     {
         <partial name="LoginWithFido2" model="@Model.LoginWithFido2ViewModel"/>
+    }
+    @if (Model.LoginWithFido2ViewModel != null && Model.LoginWithLNURLAuthViewModel != null)
+    {
+        <div class="auth-or-separator" text-translate="true">or</div>
     }
     @if (Model.LoginWithLNURLAuthViewModel != null)
     {

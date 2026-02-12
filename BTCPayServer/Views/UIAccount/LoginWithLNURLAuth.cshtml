@@ -7,13 +7,16 @@
     };
 }
 
-<div id="lnurlauth-section" class="twoFaBox">
+<div id="lnurlauth-section" class="auth-method">
     <form id="authform" asp-action="LoginWithLNURLAuth" method="post" asp-route-returnUrl="@ViewData["ReturnUrl"]">
         <input type="hidden" asp-for="LNURLEndpoint"/>
         <input type="hidden" asp-for="UserId"/>
     </form>
-    <h2 class="h3 mb-3" text-translate="true">LNURL Authentication</h2>
-    <p text-translate="true">Scan the QR code with your Lightning wallet to sign in.</p>
+    <div class="auth-method-header">
+        <vc:icon symbol="lightning" />
+        <h2 class="h3" text-translate="true">Lightning Login</h2>
+    </div>
+    <p class="auth-method-description" text-translate="true">Scan the QR code with your Lightning wallet to sign in.</p>
     <div class="align-items-center" style="width:256px">
         <ul class="nav my-3 btcpay-pills align-items-center gap-2">
             @for (var i = 0; i < formats.Count; i++)
