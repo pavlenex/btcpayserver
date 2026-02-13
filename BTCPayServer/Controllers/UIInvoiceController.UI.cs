@@ -115,7 +115,8 @@ namespace BTCPayServer.Controllers
             if (store == null)
                 return NotFound();
 
-            var receipt = InvoiceDataBase.ReceiptOptions.Merge(store.GetStoreBlob().ReceiptOptions, invoice.ReceiptOptions);
+            var storeBlob = store.GetStoreBlob();
+            var receipt = InvoiceDataBase.ReceiptOptions.Merge(storeBlob.ReceiptOptions, invoice.ReceiptOptions);
             var invoiceState = invoice.GetInvoiceState();
             var metaData = PosDataParser.ParsePosData(invoice.Metadata.ToJObject());
             var additionalData = metaData
@@ -158,6 +159,8 @@ namespace BTCPayServer.Controllers
                                     .Select(c => new DeliveryViewModel(c))
                                     .ToList()
             };
+
+
 
             var details = InvoicePopulatePayments(invoice);
             model.CryptoPayments = details.CryptoPayments;
@@ -889,6 +892,7 @@ namespace BTCPayServer.Controllers
                 RedirectAutomatically = invoice.RedirectAutomatically,
                 StoreName = store.StoreName,
                 StoreSupportUrl = supportUrl,
+                CheckoutText = storeBlob.CheckoutText,
                 TxCount = accounting.TxRequired,
                 TxCountForFee = storeBlob.NetworkFeeMode switch
                 {

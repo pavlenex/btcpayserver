@@ -68,6 +68,7 @@ namespace BTCPayServer.Client.Models
         public string DefaultLang { get; set; }
 
         public string HtmlTitle { get; set; }
+        public string CheckoutText { get; set; }
 
         [JsonConverter(typeof(StringEnumConverter))]
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]

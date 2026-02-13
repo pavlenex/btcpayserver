@@ -222,6 +222,7 @@ namespace BTCPayServer.Controllers.Greenfield
                 InvoiceExpiration = storeBlob.InvoiceExpiration,
                 DisplayExpirationTimer = storeBlob.DisplayExpirationTimer,
                 HtmlTitle = storeBlob.HtmlTitle,
+                CheckoutText = storeBlob.CheckoutText,
                 AnyoneCanCreateInvoice = storeBlob.AnyoneCanInvoice,
                 LightningDescriptionTemplate = storeBlob.LightningDescriptionTemplate,
                 PaymentTolerance = storeBlob.PaymentTolerance,
@@ -275,6 +276,7 @@ namespace BTCPayServer.Controllers.Greenfield
             blob.InvoiceExpiration = restModel.InvoiceExpiration.Value;
             blob.DisplayExpirationTimer = restModel.DisplayExpirationTimer.Value;
             blob.HtmlTitle = restModel.HtmlTitle;
+            blob.CheckoutText = restModel.CheckoutText;
             blob.AnyoneCanInvoice = restModel.AnyoneCanCreateInvoice.Value;
             blob.LightningDescriptionTemplate = restModel.LightningDescriptionTemplate;
             blob.PaymentTolerance = restModel.PaymentTolerance.Value;
