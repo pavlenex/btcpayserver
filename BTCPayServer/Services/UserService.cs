@@ -1,7 +1,6 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions;
@@ -86,6 +85,7 @@ namespace BTCPayServer.Services
                 Name = blob.Name,
                 Roles = roles,
                 Disabled = data.IsDisabled,
+                StoreQuota = blob.StoreQuota,
                 ImageUrl = string.IsNullOrEmpty(blob.ImageUrl)
                     ? null
                     : await uriResolver.Resolve(request.GetAbsoluteRootUri(), UnresolvedUri.Create(blob.ImageUrl)),
@@ -130,7 +130,7 @@ namespace BTCPayServer.Services
             public ApplicationUser User => _user ?? throw new InvalidOperationException("User is not set");
             public List<LoginFailure> Failures { get; } = new();
             /// <summary>
-            /// A redirect URL to redirect the user if login failed.
+            /// A redirect URL to redirect the user if he isn't allowed to login.
             /// </summary>
             public string? FailedRedirectUrl { get; set; }
         }

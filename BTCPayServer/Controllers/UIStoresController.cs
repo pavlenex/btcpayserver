@@ -7,11 +7,12 @@ using BTCPayServer.Client;
 using BTCPayServer.Configuration;
 using BTCPayServer.Data;
 using BTCPayServer.Models.StoreViewModels;
-using BTCPayServer.Security.Bitpay;
+using BTCPayServer.Plugins.Emails.Services;
+using BTCPayServer.Plugins.Monetization;
+using BTCPayServer.Plugins.Wallets;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Invoices;
-using BTCPayServer.Plugins.Emails.Services;
 using BTCPayServer.Services.Labels;
 using BTCPayServer.Services.Rates;
 using BTCPayServer.Services.Stores;
@@ -28,18 +29,14 @@ using StoreData = BTCPayServer.Data.StoreData;
 namespace BTCPayServer.Controllers;
 
 [Route("stores")]
-[Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [Authorize(Policy = Policies.CanViewStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
-[AutoValidateAntiforgeryToken]
 public partial class UIStoresController : Controller
 {
     public UIStoresController(
         BTCPayServerOptions btcpayServerOptions,
         BTCPayServerEnvironment btcpayEnv,
         StoreRepository storeRepo,
-        TokenRepository tokenRepo,
         UserManager<ApplicationUser> userManager,
-        BitpayAccessTokenController tokenController,
         BTCPayWalletProvider walletProvider,
         BTCPayNetworkProvider networkProvider,
         RateFetcher rateFactory,
@@ -69,10 +66,8 @@ public partial class UIStoresController : Controller
     {
         _rateFactory = rateFactory;
         _storeRepo = storeRepo;
-        _tokenRepository = tokenRepo;
         _userManager = userManager;
         _langService = langService;
-        _tokenController = tokenController;
         _walletProvider = walletProvider;
         _handlers = paymentMethodHandlerDictionary;
         _policiesSettings = policiesSettings;
@@ -105,9 +100,7 @@ public partial class UIStoresController : Controller
     private readonly BTCPayServerEnvironment _btcPayEnv;
     private readonly BTCPayNetworkProvider _networkProvider;
     private readonly BTCPayWalletProvider _walletProvider;
-    private readonly BitpayAccessTokenController _tokenController;
     private readonly StoreRepository _storeRepo;
-    private readonly TokenRepository _tokenRepository;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RateFetcher _rateFactory;
     private readonly CurrencyNameTable _currencyNameTable;
@@ -133,33 +126,59 @@ public partial class UIStoresController : Controller
     private readonly LightningClientFactoryService _lightningClientFactory;
     private readonly StoreLabelRepository _storeLabelRepository;
 
-    public string? GeneratedPairingCode { get; set; }
     public IStringLocalizer StringLocalizer { get; }
-
-    [TempData]
-    private bool StoreNotConfigured { get; set; }
 
     [AllowAnonymous]
     [HttpGet("{storeId}/index")]
     public async Task<IActionResult> Index(string storeId)
     {
-        var userId = _userManager.GetUserId(User);
-        if (string.IsNullOrEmpty(userId))
+        var userId = GetUserId();
+        if (userId is null)
             return Forbid();
-
-        var store = await _storeRepo.FindStore(storeId);
+        var store = await _storeRepo.FindStore(storeId, userId);
         if (store is null)
             return NotFound();
+        IActionResult? redirect = null;
+        if ((await _authorizationService.AuthorizeAsync(User, storeId, Policies.CanModifyStoreSettings)).Succeeded)
+        {
+            redirect = RedirectToAction(nameof(Dashboard), new { storeId });
+        }
+        else if ((await _authorizationService.AuthorizeAsync(User, storeId, Policies.CanViewInvoices)).Succeeded)
+        {
+            redirect = RedirectToAction(nameof(UIInvoiceController.ListInvoices), "UIInvoice", new { storeId });
+        }
+        else if ((await _authorizationService.AuthorizeAsync(User, storeId, WalletPolicies.CanViewWallet)).Succeeded)
+        {
+            redirect = RedirectToConfiguredWallet(store) ??
+                       RedirectToAction(nameof(UIWalletsController.ListWallets), "UIWallets", new { area = WalletsPlugin.Area });
+        }
 
-        if ((await _authorizationService.AuthorizeAsync(User, Policies.CanModifyStoreSettings)).Succeeded)
-        {
-            return RedirectToAction("Dashboard", new { storeId });
-        }
-        if ((await _authorizationService.AuthorizeAsync(User, Policies.CanViewInvoices)).Succeeded)
-        {
-            return RedirectToAction("ListInvoices", "UIInvoice", new { storeId });
-        }
-        return Forbid();
+        if (redirect is null)
+            return Forbid();
+
+        HttpContext.SetStoreData(store);
+        HttpContext.SetPreferredStoreId(storeId);
+        return redirect;
+    }
+
+    private IActionResult? RedirectToConfiguredWallet(StoreData store)
+    {
+        AddPaymentMethods(store, store.GetStoreBlob(), out var derivationSchemes, out _);
+        var defaultPaymentId = store.GetDefaultPaymentId();
+        var walletId = derivationSchemes
+            .Where(s => s.Enabled && s.WalletSupported)
+            .OrderByDescending(s => s.PaymentMethodId == defaultPaymentId)
+            .ThenByDescending(s => s.Crypto == _networkProvider.DefaultCryptoCode)
+            .Select(s => s.WalletId)
+            .FirstOrDefault();
+
+        return walletId is null
+            ? null
+            : RedirectToAction(nameof(UIWalletsController.WalletTransactions), "UIWallets", new
+            {
+                area = WalletsPlugin.Area,
+                walletId = walletId.ToString()
+            });
     }
 
     public StoreData CurrentStore => HttpContext.GetStoreData();
@@ -178,8 +197,5 @@ public partial class UIStoresController : Controller
                 }).ToArray();
     }
 
-    private string? GetUserId()
-    {
-        return User.Identity?.AuthenticationType != AuthenticationSchemes.Cookie ? null : _userManager.GetUserId(User);
-    }
+    private string? GetUserId() => User.Identity?.AuthenticationType != AuthenticationSchemes.Cookie ? null : User.GetIdOrNull();
 }

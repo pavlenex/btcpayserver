@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
-using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,7 +6,7 @@ namespace BTCPayServer.Components.UIExtensionPoint
 {
     public class UiExtensionPoint(UIExtensionsRegistry uiExtensions) : ViewComponent
     {
-        public IViewComponentResult Invoke(string location, object model)
+        public IViewComponentResult Invoke(string location, object model = null)
         {
             return View(new UiExtensionPointViewModel()
             {

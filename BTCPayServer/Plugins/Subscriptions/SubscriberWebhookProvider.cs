@@ -1,15 +1,18 @@
-﻿#nullable enable
+#nullable enable
 using System;
 using System.Threading.Tasks;
 using BTCPayServer.Client.Models;
+using BTCPayServer.Controllers;
 using BTCPayServer.Events;
 using BTCPayServer.Plugins.Webhooks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Newtonsoft.Json.Linq;
 
 
 namespace BTCPayServer.Plugins.Subscriptions;
 
-public class SubscriberWebhookProvider : WebhookTriggerProvider<SubscriptionEvent.SubscriberEvent>
+public class SubscriberWebhookProvider(LinkGenerator linkGenerator) : WebhookTriggerProvider<SubscriptionEvent.SubscriberEvent>
 {
     protected override async Task<JObject> GetEmailModel(WebhookTriggerContext<SubscriptionEvent.SubscriberEvent> webhookTriggerContext)
     {
@@ -31,7 +34,7 @@ public class SubscriberWebhookProvider : WebhookTriggerProvider<SubscriptionEven
         {
             ["Phase"] = evt.Subscriber.Phase.ToString(),
             // TODO: When the subscriber can customize the email, also check it!
-            ["Email"] = evt.Subscriber.Customer.Email.Get(),
+            ["Email"] = evt.Subscriber.Customer.NotificationEmail.Get() ?? evt.Subscriber.Customer.Email.Get(),
             ["Metadata"] = JObject.Parse(evt.Subscriber.Metadata)
         };
         model["Customer"] = new JObject()
@@ -40,6 +43,18 @@ public class SubscriberWebhookProvider : WebhookTriggerProvider<SubscriptionEven
             ["Name"] = evt.Subscriber.Customer.Name,
             ["Metadata"] = JObject.Parse(evt.Subscriber.Customer.Metadata)
         };
+        if (evt is SubscriptionEvent.CreditRefunded refunded)
+        {
+            var pullPaymentUrl = linkGenerator.GetUriByAction(nameof(UIPullPaymentController.ViewPullPayment), "UIPullPayment",
+                new { pullPaymentId = refunded.PullPaymentId }, refunded.RequestBaseUrl.Scheme, new HostString(refunded.RequestBaseUrl.Host.Host));
+
+            model["Refund"] = new JObject()
+            {
+                ["Amount"] = refunded.Amount,
+                ["Currency"] = refunded.Currency,
+                ["ClaimUrl"] = pullPaymentUrl
+            };
+        }
         return model;
     }
 
@@ -90,10 +105,12 @@ public class SubscriberWebhookProvider : WebhookTriggerProvider<SubscriptionEven
                     CurrentPhase = Mapper.Map(sub.Phase)
                 };
 
-            case SubscriptionEvent.SubscriberDisabled:
+            case SubscriptionEvent.SubscriberDisabled disabled:
                 return new WebhookSubscriptionEvent.SubscriberDisabledEvent(storeId)
                 {
-                    Subscriber = model
+                    Subscriber = model,
+                    Reason = Map(disabled.Reason),
+                    SuspensionReason = disabled.SuspensionReason
                 };
 
             case SubscriptionEvent.PaymentReminder:
@@ -113,8 +130,27 @@ public class SubscriberWebhookProvider : WebhookTriggerProvider<SubscriptionEven
                 {
                     Subscriber = model
                 };
+            case SubscriptionEvent.CreditRefunded refunded:
+                var pullPaymentUrl = linkGenerator.GetUriByAction(nameof(UIPullPaymentController.ViewPullPayment), "UIPullPayment",
+                    new { pullPaymentId = refunded.PullPaymentId }, refunded.RequestBaseUrl.Scheme, new HostString(refunded.RequestBaseUrl.Host.Host));
+
+                return new WebhookSubscriptionEvent.CreditRefundedEvent(storeId)
+                {
+                    Subscriber = model,
+                    Amount = refunded.Amount,
+                    Currency = refunded.Currency,
+                    PullPaymentUrl = pullPaymentUrl
+                };
             default:
                 throw new ArgumentOutOfRangeException(nameof(evt), evt.GetType(), "Unsupported subscription event type");
         }
     }
+
+    private WebhookSubscriptionEvent.SubscriberDisabledEvent.DisabledReason Map(SubscriptionEvent.DisabledReason disabledReason)
+        => disabledReason switch
+        {
+            SubscriptionEvent.DisabledReason.Expired => WebhookSubscriptionEvent.SubscriberDisabledEvent.DisabledReason.Expired,
+            SubscriptionEvent.DisabledReason.Suspension => WebhookSubscriptionEvent.SubscriberDisabledEvent.DisabledReason.Suspension,
+            _ => throw new ArgumentOutOfRangeException(nameof(disabledReason), disabledReason, null)
+        };
 }

@@ -1,11 +1,9 @@
 using System;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Configuration;
-using BTCPayServer.Controllers.Greenfield;
 using BTCPayServer.Data;
 using BTCPayServer.Fido2;
 using BTCPayServer.Filters;
@@ -18,7 +16,6 @@ using BTCPayServer.Services.Apps;
 using BTCPayServer.Storage;
 using Fido2NetLib;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
@@ -33,7 +30,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -108,6 +104,9 @@ namespace BTCPayServer.Hosting
             services.AddIdentity<ApplicationUser, IdentityRole>()
                 .AddEntityFrameworkStores<ApplicationDbContext>()
                 .AddDefaultTokenProviders()
+                .AddTokenProvider<Fido2TokenProvider>("FIDO2")
+                .AddTokenProvider<DisabledEmailTokenProvider>(TokenOptions.DefaultEmailProvider)
+                .AddTokenProvider<BTCPayAuthenticatorTokenProvider>(TokenOptions.DefaultAuthenticatorProvider)
                 .AddInvitationTokenProvider();
             services.Configure<AuthenticationOptions>(opts =>
             {
@@ -153,11 +152,10 @@ namespace BTCPayServer.Hosting
                 };
             });
             services.AddScoped<Fido2Service>();
-            services.AddSingleton<UserLoginCodeService>();
             services.AddSingleton<LnurlAuthService>();
             services.AddSingleton<LightningAddressService>();
             var mvcBuilder = services.AddMvc(o =>
-             {
+                {
                  o.Filters.Add(new XFrameOptionsAttribute(XFrameOptionsAttribute.XFrameOptions.Deny));
                  o.Filters.Add(new XContentTypeOptionsAttribute("nosniff"));
                  o.Filters.Add(new XXSSProtectionAttribute());
@@ -166,7 +164,10 @@ namespace BTCPayServer.Hosting
                  if (!Configuration.GetOrDefault<bool>("nocsp", false))
                      o.Filters.Add(new ContentSecurityPolicyAttribute(CSPTemplate.AntiXSS));
                  o.Filters.Add(new JsonHttpExceptionFilter());
+                 // Note: Plugins should rather put controller-specific filters rather than this global one
+                 o.Filters.Add<Security.SetContextFilter>();
                  o.Filters.Add(new JsonObjectExceptionFilter());
+                 o.Filters.Add(new UIControllerAntiforgeryTokenAttribute());
              })
             .ConfigureApiBehaviorOptions(options =>
             {
@@ -180,13 +181,16 @@ namespace BTCPayServer.Hosting
                 // /Components/{View Component Name}/{View Name}.cshtml
                 o.ViewLocationFormats.Add("/{0}.cshtml");
                 o.PageViewLocationFormats.Add("/{0}.cshtml");
+                o.AreaViewLocationFormats.Add("/{0}.cshtml");
 
                 // Allows the use of Area for plugins
                 o.AreaViewLocationFormats.Add("/Plugins/{2}/Views/{1}/{0}.cshtml");
                 o.AreaViewLocationFormats.Add("/Plugins/{2}/Views/{0}.cshtml");
                 o.AreaViewLocationFormats.Add("/Plugins/{2}/Views/Shared/{0}.cshtml");
 
-                o.AreaViewLocationFormats.Add("/{0}.cshtml");
+                o.AreaViewLocationFormats.Add("/Plugins/{2}/Pages/{1}/{0}.cshtml");
+                o.AreaViewLocationFormats.Add("/Plugins/{2}/Pages/{0}.cshtml");
+                o.AreaViewLocationFormats.Add("/Plugins/{2}/Pages/Shared/{0}.cshtml");
             })
             .AddNewtonsoftJson()
             .AddPlugins(services, Configuration, LoggerFactory, bootstrapServiceProvider)
@@ -293,7 +297,6 @@ namespace BTCPayServer.Hosting
                 rateLimits.SetZone($"zone={ZoneLimits.PublicInvoices} rate=1000r/min burst=100 nodelay");
                 rateLimits.SetZone($"zone={ZoneLimits.Register} rate=1000r/min burst=100 nodelay");
                 rateLimits.SetZone($"zone={ZoneLimits.PayJoin} rate=1000r/min burst=100 nodelay");
-                rateLimits.SetZone($"zone={ZoneLimits.Shopify} rate=1000r/min burst=100 nodelay");
                 rateLimits.SetZone($"zone={ZoneLimits.ForgotPassword} rate=5r/d burst=3 nodelay");
             }
             else
@@ -302,7 +305,6 @@ namespace BTCPayServer.Hosting
                 rateLimits.SetZone($"zone={ZoneLimits.PublicInvoices} rate=4r/min burst=10 delay=3");
                 rateLimits.SetZone($"zone={ZoneLimits.Register} rate=2r/min burst=2 nodelay");
                 rateLimits.SetZone($"zone={ZoneLimits.PayJoin} rate=5r/min burst=3 nodelay");
-                rateLimits.SetZone($"zone={ZoneLimits.Shopify} rate=20r/min burst=3 nodelay");
                 rateLimits.SetZone($"zone={ZoneLimits.ForgotPassword} rate=5r/d burst=5 nodelay");
             }
 
@@ -332,7 +334,7 @@ namespace BTCPayServer.Hosting
             app.UseExceptionHandler("/errors/{0}");
             app.UsePayServer();
             app.UseRouting();
-            app.UseCors();
+            app.UseCors(CorsPolicies.All);
 
             app.UseStaticFiles(new StaticFileOptions
             {

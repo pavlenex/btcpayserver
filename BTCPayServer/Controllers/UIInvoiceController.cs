@@ -5,7 +5,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Services;
@@ -15,7 +14,6 @@ using BTCPayServer.HostedServices;
 using BTCPayServer.Logging;
 using BTCPayServer.Payments;
 using BTCPayServer.Rating;
-using BTCPayServer.Security;
 using BTCPayServer.Security.Greenfield;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Invoices;
@@ -24,7 +22,6 @@ using BTCPayServer.Services.Rates;
 using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Newtonsoft.Json.Linq;
@@ -36,13 +33,11 @@ using Microsoft.Extensions.Localization;
 
 namespace BTCPayServer.Controllers
 {
-    [Filters.BitpayAPIConstraint(false)]
     public partial class UIInvoiceController : Controller
     {
         readonly InvoiceRepository _InvoiceRepository;
         readonly RateFetcher _RateProvider;
         readonly StoreRepository _StoreRepository;
-        readonly UserManager<ApplicationUser> _UserManager;
         private readonly CurrencyNameTable _CurrencyNameTable;
         private readonly DisplayFormatter _displayFormatter;
         readonly EventAggregator _EventAggregator;
@@ -54,7 +49,6 @@ namespace BTCPayServer.Controllers
         private readonly PullPaymentHostedService _paymentHostedService;
         private readonly LanguageService _languageService;
         private readonly ExplorerClientProvider _ExplorerClients;
-        private readonly UIWalletsController _walletsController;
         private readonly InvoiceActivator _invoiceActivator;
         private readonly LinkGenerator _linkGenerator;
         private readonly IAuthorizationService _authorizationService;
@@ -62,8 +56,8 @@ namespace BTCPayServer.Controllers
         private readonly Dictionary<PaymentMethodId, ICheckoutModelExtension> _paymentModelExtensions;
         private readonly PrettyNameProvider _prettyName;
         private readonly AppService _appService;
-        private readonly IFileService _fileService;
         private readonly UriResolver _uriResolver;
+        private readonly PermissionService _permissionService;
 
         public WebhookSender WebhookNotificationManager { get; }
         public IEnumerable<IGlobalCheckoutModelExtension> GlobalCheckoutModelExtensions { get; }
@@ -74,7 +68,6 @@ namespace BTCPayServer.Controllers
             InvoiceRepository invoiceRepository,
             DisplayFormatter displayFormatter,
             CurrencyNameTable currencyNameTable,
-            UserManager<ApplicationUser> userManager,
             RateFetcher rateProvider,
             StoreRepository storeRepository,
             EventAggregator eventAggregator,
@@ -86,11 +79,9 @@ namespace BTCPayServer.Controllers
             WebhookSender webhookNotificationManager,
             LanguageService languageService,
             ExplorerClientProvider explorerClients,
-            UIWalletsController walletsController,
             InvoiceActivator invoiceActivator,
             LinkGenerator linkGenerator,
             AppService appService,
-            IFileService fileService,
             UriResolver uriResolver,
             DefaultRulesCollection defaultRules,
             IAuthorizationService authorizationService,
@@ -99,14 +90,14 @@ namespace BTCPayServer.Controllers
             IEnumerable<IGlobalCheckoutModelExtension> globalCheckoutModelExtensions,
             IStringLocalizer stringLocalizer,
             ViewLocalizer viewLocalizer,
-            PrettyNameProvider prettyName)
+            PrettyNameProvider prettyName,
+            PermissionService permissionService)
         {
             _displayFormatter = displayFormatter;
             _CurrencyNameTable = currencyNameTable ?? throw new ArgumentNullException(nameof(currencyNameTable));
             _StoreRepository = storeRepository ?? throw new ArgumentNullException(nameof(storeRepository));
             _InvoiceRepository = invoiceRepository ?? throw new ArgumentNullException(nameof(invoiceRepository));
             _RateProvider = rateProvider ?? throw new ArgumentNullException(nameof(rateProvider));
-            _UserManager = userManager;
             _EventAggregator = eventAggregator;
             _NetworkProvider = networkProvider;
             this._payoutHandlers = payoutHandlers;
@@ -116,7 +107,6 @@ namespace BTCPayServer.Controllers
             WebhookNotificationManager = webhookNotificationManager;
             _languageService = languageService;
             this._ExplorerClients = explorerClients;
-            _walletsController = walletsController;
             _invoiceActivator = invoiceActivator;
             _linkGenerator = linkGenerator;
             _authorizationService = authorizationService;
@@ -124,12 +114,12 @@ namespace BTCPayServer.Controllers
             _paymentModelExtensions = paymentModelExtensions;
             GlobalCheckoutModelExtensions = globalCheckoutModelExtensions;
             _prettyName = prettyName;
-            _fileService = fileService;
             _uriResolver = uriResolver;
             _defaultRules = defaultRules;
             _appService = appService;
             StringLocalizer = stringLocalizer;
             ViewLocalizer = viewLocalizer;
+            _permissionService = permissionService;
         }
 
         internal async Task<InvoiceEntity> CreatePaymentRequestInvoice(Data.PaymentRequestData prData, decimal? amount, decimal amountDue, StoreData storeData, HttpRequest request, CancellationToken cancellationToken)

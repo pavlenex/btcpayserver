@@ -19,35 +19,37 @@ using Microsoft.Extensions.Localization;
 namespace BTCPayServer.Controllers
 {
     [Route("stores")]
-    [AutoValidateAntiforgeryToken]
     public class UIUserStoresController : Controller
     {
         private readonly StoreRepository _repo;
         private readonly IStringLocalizer StringLocalizer;
-        private readonly UserManager<ApplicationUser> _userManager;
         private readonly DefaultRulesCollection _defaultRules;
         private readonly RateFetcher _rateFactory;
+        private readonly PoliciesSettings _policiesSettings;
+        private readonly UserManager<ApplicationUser> _userManager;
         public string CreatedStoreId { get; set; }
 
         public UIUserStoresController(
-            UserManager<ApplicationUser> userManager,
 			DefaultRulesCollection defaultRules,
             StoreRepository storeRepository,
             IStringLocalizer stringLocalizer,
-            RateFetcher rateFactory)
+            RateFetcher rateFactory,
+            PoliciesSettings policiesSettings,
+            UserManager<ApplicationUser> userManager)
         {
             _repo = storeRepository;
             StringLocalizer = stringLocalizer;
-            _userManager = userManager;
             _defaultRules = defaultRules;
             _rateFactory = rateFactory;
+            _policiesSettings = policiesSettings;
+            _userManager = userManager;
         }
 
         [HttpGet]
-        [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettingsUnscoped)]
-        public async Task<IActionResult> ListStores(bool archived = false)
+        [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanViewStoreSettings)]
+        public IActionResult ListStores(bool archived = false)
         {
-            var stores = await _repo.GetStoresByUserId(GetUserId());
+            var stores = HttpContext.GetStoresData();
             var vm = new ListStoresViewModel
             {
                 Stores = stores
@@ -68,7 +70,25 @@ namespace BTCPayServer.Controllers
         [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettingsUnscoped)]
         public async Task<IActionResult> CreateStore(bool skipWizard)
         {
-            var stores = await _repo.GetStoresByUserId(GetUserId());
+            var userId = User.GetId();
+            var limit = await GetEffectiveStoreLimitAsync();
+            if (limit.HasValue)
+            {
+                var count = await _repo.CountStoresByUserId(userId);
+                if (count >= limit.Value)
+                {
+                    TempData.SetStatusMessageModel(new StatusMessageModel
+                    {
+                        Severity = StatusMessageModel.StatusSeverity.Error,
+                        Message = limit.Value == 0
+                            ? StringLocalizer["Store creation is not allowed on this server."].Value
+                            : StringLocalizer["You have reached the maximum number of stores allowed ({0}).", limit.Value].Value
+                    });
+                    return RedirectToAction(nameof(ListStores));
+                }
+            }
+
+            var stores = await _repo.GetStoresByUserId(userId);
             var defaultTemplate = await _repo.GetDefaultStoreTemplate();
             var blob = defaultTemplate.GetStoreBlob();
             var vm = new CreateStoreViewModel
@@ -88,9 +108,11 @@ namespace BTCPayServer.Controllers
         [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettingsUnscoped)]
         public async Task<IActionResult> CreateStore(CreateStoreViewModel vm)
         {
+            var userId = User.GetId();
+
             if (!ModelState.IsValid)
             {
-                var stores = await _repo.GetStoresByUserId(GetUserId());
+                var stores = await _repo.GetStoresByUserId(userId);
                 vm.IsFirstStore = !stores.Any();
                 var template = await _repo.GetDefaultStoreTemplate();
                 var defaultCurrency = template.GetStoreBlob().DefaultCurrency ?? StoreBlob.StandardDefaultCurrency;
@@ -109,7 +131,19 @@ namespace BTCPayServer.Controllers
                 rate.RateScripting = false;
             }
             store.SetStoreBlob(blob);
-            await _repo.CreateStore(GetUserId(), store);
+
+            var result = await _repo.CreateStore(User.GetId(), store);
+            if (result == StoreRepository.CreateStoreResult.QuotaExceeded)
+            {
+                ModelState.AddModelError(string.Empty, StringLocalizer["You have reached the maximum number of stores allowed."].Value);
+                var stores = await _repo.GetStoresByUserId(userId);
+                vm.IsFirstStore = !stores.Any();
+                var template = await _repo.GetDefaultStoreTemplate();
+                var defaultCurrency = template.GetStoreBlob().DefaultCurrency ?? StoreBlob.StandardDefaultCurrency;
+                vm.Exchanges = GetExchangesSelectList(defaultCurrency, null);
+                return View(vm);
+            }
+
             CreatedStoreId = store.Id;
             TempData.SetStatusSuccess(StringLocalizer["Store successfully created"]);
             return RedirectToAction(nameof(UIStoresController.Index), "UIStores", new
@@ -118,11 +152,20 @@ namespace BTCPayServer.Controllers
             });
         }
 
+        private async Task<int?> GetEffectiveStoreLimitAsync()
+        {
+            if (User.IsInRole(Roles.ServerAdmin))
+                return null;
+            var user = await _userManager.GetUserAsync(User);
+            var blob = user?.GetBlob();
+            return blob?.StoreQuota ?? _policiesSettings.StoreQuota;
+        }
+
         [HttpGet("{storeId}/me/delete")]
         [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettings)]
         public IActionResult DeleteStore(string storeId)
         {
-            var store = HttpContext.GetStoreData();
+            var store = HttpContext.GetStoreDataOrNull();
             if (store == null)
                 return NotFound();
             return View("Confirm", new ConfirmModel(StringLocalizer["Delete store {0}", store.StoreName], StringLocalizer["This store will still be accessible to users sharing it"], StringLocalizer["Delete"]));
@@ -132,16 +175,13 @@ namespace BTCPayServer.Controllers
         [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettings)]
         public async Task<IActionResult> DeleteStorePost(string storeId)
         {
-            var userId = GetUserId();
-            var store = HttpContext.GetStoreData();
+            var store = HttpContext.GetStoreDataOrNull();
             if (store == null)
                 return NotFound();
-            await _repo.RemoveStore(storeId, userId);
+            await _repo.RemoveStore(storeId, User.GetId());
             TempData.SetStatusSuccess(StringLocalizer["Store removed successfully"]);
             return RedirectToAction(nameof(UIHomeController.Index), "UIHome");
         }
-
-        private string GetUserId() => _userManager.GetUserId(User);
 
 		internal SelectList GetExchangesSelectList(string defaultCurrency, StoreBlob.RateSettings rateSettings)
 		{

@@ -21,17 +21,18 @@ namespace BTCPayServer
     [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanViewProfile)]
     public class UILNURLAuthController : Controller
     {
-        private readonly UserManager<ApplicationUser> _userManager;
         private readonly LnurlAuthService _lnurlAuthService;
         private readonly LinkGenerator _linkGenerator;
+        private readonly SignInManager<ApplicationUser> _signInManager;
         public IStringLocalizer StringLocalizer { get; }
 
-        public UILNURLAuthController(UserManager<ApplicationUser> userManager, LnurlAuthService lnurlAuthService,
+        public UILNURLAuthController(LnurlAuthService lnurlAuthService,
+            SignInManager<ApplicationUser> signInManager,
             IStringLocalizer stringLocalizer, LinkGenerator linkGenerator)
         {
-            _userManager = userManager;
             _lnurlAuthService = lnurlAuthService;
             _linkGenerator = linkGenerator;
+            _signInManager = signInManager;
             StringLocalizer = stringLocalizer;
         }
 
@@ -47,7 +48,7 @@ namespace BTCPayServer
         [HttpPost("{id}/delete")]
         public async Task<IActionResult> RemoveP(string id)
         {
-            await _lnurlAuthService.Remove(id, _userManager.GetUserId(User));
+            await _lnurlAuthService.Remove(id, User.GetId());
 
             TempData.SetStatusMessageModel(new StatusMessageModel
             {
@@ -61,7 +62,7 @@ namespace BTCPayServer
         [HttpGet("register")]
         public async Task<IActionResult> Create(string name)
         {
-            var userId = _userManager.GetUserId(User);
+            var userId = User.GetId();
             var options = await _lnurlAuthService.RequestCreation(userId);
             if (options is null)
             {
@@ -90,7 +91,7 @@ namespace BTCPayServer
         [HttpGet("register/check")]
         public Task<IActionResult> CreateCheck()
         {
-            var userId = _userManager.GetUserId(User);
+            var userId = User.GetId();
             if (_lnurlAuthService.CreationStore.TryGetValue(userId, out _))
             {
                 return Task.FromResult<IActionResult>(Ok());
@@ -119,9 +120,10 @@ namespace BTCPayServer
 
         [HttpGet("login-check")]
         [AllowAnonymous]
-        public Task<IActionResult> LoginCheck(string userId)
+        public async Task<IActionResult> LoginCheck()
         {
-            return _lnurlAuthService.LoginStore.ContainsKey(userId) ? Task.FromResult<IActionResult>(Ok()) : Task.FromResult<IActionResult>(NotFound());
+            var user = await _signInManager.GetTwoFactorAuthenticationUserAsync();
+            return _lnurlAuthService.LoginStore.ContainsKey(user?.Id ?? "") ? Ok() : NotFound();
         }
 
         [HttpGet("login-callback")]

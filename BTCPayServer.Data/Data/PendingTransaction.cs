@@ -1,17 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using System.Text.Json.Serialization;
-using BTCPayServer.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Newtonsoft.Json;
 
 namespace BTCPayServer.Data;
 
 public class PendingTransaction: IHasBlob<PendingTransactionBlob>
     {
         public string Id { get; set; }
+        public string NoSignatureTransactionId { get; set; }
         public string TransactionId { get; set; }
         public string CryptoCode { get; set; }
         public string StoreId { get; set; }
@@ -25,6 +24,9 @@ public class PendingTransaction: IHasBlob<PendingTransactionBlob>
 
         public string Blob2 { get; set; }
 
+        [Timestamp]
+        public uint XMin { get; set; }
+
 
         internal static void OnModelCreating(ModelBuilder builder, DatabaseFacade databaseFacade)
         {
@@ -36,7 +38,7 @@ public class PendingTransaction: IHasBlob<PendingTransactionBlob>
 
             builder.Entity<PendingTransaction>().HasKey(t => t.Id);
             builder.Entity<PendingTransaction>().HasIndex(t => new { t.StoreId });
-            builder.Entity<PendingTransaction>().HasIndex(t => new { t.TransactionId });
+            builder.Entity<PendingTransaction>().HasIndex(t => new { t.NoSignatureTransactionId });
 
             builder.Entity<PendingTransaction>()
                 .Property(o => o.Blob2)

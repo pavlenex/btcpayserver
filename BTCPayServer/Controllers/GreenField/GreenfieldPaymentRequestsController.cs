@@ -14,12 +14,8 @@ using BTCPayServer.Services.PaymentRequests;
 using BTCPayServer.Services.Rates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
-using TwentyTwenty.Storage;
-using static System.Runtime.InteropServices.JavaScript.JSType;
-using static QRCoder.PayloadGenerator;
 using PaymentRequestData = BTCPayServer.Data.PaymentRequestData;
 
 namespace BTCPayServer.Controllers.Greenfield
@@ -33,7 +29,6 @@ namespace BTCPayServer.Controllers.Greenfield
 		private readonly UIInvoiceController _invoiceController;
 		private readonly PaymentRequestRepository _paymentRequestRepository;
 		private readonly CurrencyNameTable _currencyNameTable;
-		private readonly UserManager<ApplicationUser> _userManager;
 		private readonly LinkGenerator _linkGenerator;
 
 		public GreenfieldPaymentRequestsController(
@@ -42,7 +37,6 @@ namespace BTCPayServer.Controllers.Greenfield
 			PaymentRequestRepository paymentRequestRepository,
 			PaymentRequestService paymentRequestService,
 			CurrencyNameTable currencyNameTable,
-			UserManager<ApplicationUser> userManager,
 			LinkGenerator linkGenerator)
 		{
 			_InvoiceRepository = invoiceRepository;
@@ -50,7 +44,6 @@ namespace BTCPayServer.Controllers.Greenfield
 			_paymentRequestRepository = paymentRequestRepository;
 			PaymentRequestService = paymentRequestService;
 			_currencyNameTable = currencyNameTable;
-			_userManager = userManager;
 			_linkGenerator = linkGenerator;
 		}
 
@@ -65,27 +58,26 @@ namespace BTCPayServer.Controllers.Greenfield
 
 		[Authorize(Policy = Policies.CanViewPaymentRequests, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 		[HttpGet("~/api/v1/stores/{storeId}/payment-requests/{paymentRequestId}")]
+		[HttpGet("~/api/v1/payment-requests/{paymentRequestId}")]
 		public async Task<IActionResult> GetPaymentRequest(string storeId, string paymentRequestId)
 		{
-			var pr = await _paymentRequestRepository.FindPaymentRequests(
-				new PaymentRequestQuery() { StoreId = storeId, Ids = new[] { paymentRequestId } });
+			var pr = HttpContext.GetPaymentRequestDataOrNull();
 
-			if (pr.Length == 0)
-			{
+			if (pr is null)
 				return PaymentRequestNotFound();
-			}
 
-			return Ok(FromModel(pr.First()));
+			return Ok(FromModel(pr));
 		}
 
 		[Authorize(Policy = Policies.CanViewPaymentRequests, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 		[HttpPost("~/api/v1/stores/{storeId}/payment-requests/{paymentRequestId}/pay")]
+		[HttpPost("~/api/v1/payment-requests/{paymentRequestId}/pay")]
 		public async Task<IActionResult> PayPaymentRequest(string storeId, string paymentRequestId, [FromBody] PayPaymentRequestRequest pay, CancellationToken cancellationToken)
 		{
-			var pr = await this.PaymentRequestService.GetPaymentRequest(paymentRequestId);
-			if (pr is null || pr.StoreId != storeId)
+			var p = HttpContext.GetPaymentRequestDataOrNull();
+			if (p is null)
 				return PaymentRequestNotFound();
-
+            var pr = await PaymentRequestService.AsViewModel(p);
 			var amount = pay?.Amount;
 			if (amount.HasValue && amount.Value <= 0)
 			{
@@ -125,8 +117,9 @@ namespace BTCPayServer.Controllers.Greenfield
 
 			try
 			{
+				var storeData = HttpContext.GetStoreData();
 				var prData = await _paymentRequestRepository.FindPaymentRequest(pr.Id, null);
-				var invoice = await _invoiceController.CreatePaymentRequestInvoice(prData, amount, pr.AmountDue, this.StoreData, Request, cancellationToken);
+				var invoice = await _invoiceController.CreatePaymentRequestInvoice(prData, amount, pr.AmountDue, storeData, Request, cancellationToken);
 				return Ok(GreenfieldInvoiceController.ToModel(invoice, _linkGenerator, _currencyNameTable, Request));
 			}
 			catch (BitpayHttpException e)
@@ -138,21 +131,20 @@ namespace BTCPayServer.Controllers.Greenfield
 		[Authorize(Policy = Policies.CanModifyPaymentRequests,
 			AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 		[HttpDelete("~/api/v1/stores/{storeId}/payment-requests/{paymentRequestId}")]
+		[HttpDelete("~/api/v1/payment-requests/{paymentRequestId}")]
 		public async Task<IActionResult> ArchivePaymentRequest(string storeId, string paymentRequestId)
 		{
-			var pr = await _paymentRequestRepository.FindPaymentRequests(
-				new PaymentRequestQuery() { StoreId = storeId, Ids = new[] { paymentRequestId }, IncludeArchived = false });
-			if (pr.Length == 0)
-			{
+			var pr = HttpContext.GetPaymentRequestDataOrNull();
+			if (pr is null || pr.Archived)
 				return PaymentRequestNotFound();
-			}
 
-			await _paymentRequestRepository.ArchivePaymentRequest(pr.First().Id);
+			await _paymentRequestRepository.ArchivePaymentRequest(pr.Id);
 			return Ok();
 		}
 
 		[HttpPost("~/api/v1/stores/{storeId}/payment-requests")]
 		[HttpPut("~/api/v1/stores/{storeId}/payment-requests/{paymentRequestId}")]
+		[HttpPut("~/api/v1/payment-requests/{paymentRequestId}")]
 		[Authorize(Policy = Policies.CanModifyPaymentRequests,
 			AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 		public async Task<IActionResult> CreateOrUpdatePaymentRequest(
@@ -175,43 +167,43 @@ namespace BTCPayServer.Controllers.Greenfield
 			if (string.IsNullOrEmpty(request.Title))
 				ModelState.AddModelError(nameof(request.Title), "Title is required");
 
-			PaymentRequestData pr;
-			if (paymentRequestId is not null)
+		PaymentRequestData pr;
+		if (paymentRequestId is not null)
+		{
+			pr = HttpContext.GetPaymentRequestDataOrNull();
+			if (pr is null)
+				return PaymentRequestNotFound();
+			if ((pr.Amount != request.Amount && request.Amount != 0.0m) ||
+				(pr.Currency != request.Currency && request.Currency != null))
 			{
-				pr = (await _paymentRequestRepository.FindPaymentRequests(
-					new PaymentRequestQuery() { StoreId = storeId, Ids = new[] { paymentRequestId } })).FirstOrDefault();
-				if (pr is null)
-					return PaymentRequestNotFound();
-				if ((pr.Amount != request.Amount && request.Amount != 0.0m) ||
-					(pr.Currency != request.Currency && request.Currency != null))
+				var prWithInvoices = await this.PaymentRequestService.GetPaymentRequest(paymentRequestId, GetUserId());
+				if (prWithInvoices.Invoices.Any())
 				{
-					var prWithInvoices = await this.PaymentRequestService.GetPaymentRequest(paymentRequestId, GetUserId());
-					if (prWithInvoices.Invoices.Any())
-					{
-						ModelState.AddModelError(nameof(request.Amount), "Amount and currency are not editable once payment request has invoices");
-					}
-					else
-					{
-						if (request.Amount != 0.0m)
-							pr.Amount = request.Amount;
-						if (request.Currency != null)
-							pr.Currency = request.Currency;
-					}
+					ModelState.AddModelError(nameof(request.Amount), "Amount and currency are not editable once payment request has invoices");
 				}
-				pr.Expiry = request.ExpiryDate;
-			}
-			else
-			{
-				pr = new PaymentRequestData()
+				else
 				{
-					StoreDataId = storeId,
-					Status = PaymentRequestStatus.Pending,
-					Created = DateTimeOffset.UtcNow,
-					Amount = request.Amount,
-					Currency = request.Currency ?? StoreData.GetStoreBlob().DefaultCurrency,
-					Expiry = request.ExpiryDate,
-				};
+					if (request.Amount != 0.0m)
+						pr.Amount = request.Amount;
+					if (request.Currency != null)
+						pr.Currency = request.Currency;
+				}
 			}
+			pr.Expiry = request.ExpiryDate;
+		}
+		else
+		{
+			var storeData = HttpContext.GetStoreData();
+			pr = new PaymentRequestData()
+			{
+                StoreDataId = storeData.Id,
+				Status = PaymentRequestStatus.Pending,
+				Created = DateTimeOffset.UtcNow,
+				Amount = request.Amount,
+				Currency = request.Currency ?? storeData.GetStoreBlob().DefaultCurrency,
+				Expiry = request.ExpiryDate,
+			};
+		}
 
 			pr.ReferenceId = string.IsNullOrEmpty(request.ReferenceId) ? null : request.ReferenceId;
 
@@ -232,11 +224,10 @@ namespace BTCPayServer.Controllers.Greenfield
 			pr = await _paymentRequestRepository.CreateOrUpdatePaymentRequest(pr);
 			return Ok(FromModel(pr));
 		}
-		public Data.StoreData StoreData => HttpContext.GetStoreData();
 
 		public PaymentRequestService PaymentRequestService { get; }
 
-		private string GetUserId() => _userManager.GetUserId(User);
+		private string GetUserId() => User.GetIdOrNull();
 
 		private static Client.Models.PaymentRequestBaseData FromModel(PaymentRequestData data)
 		{
@@ -245,7 +236,7 @@ namespace BTCPayServer.Controllers.Greenfield
 			{
 				CreatedTime = data.Created,
 				Id = data.Id,
-				StoreId = data.StoreDataId,
+                StoreId = data.StoreDataId,
 				Status = data.Status,
 				Archived = data.Archived,
 				Amount = data.Amount,

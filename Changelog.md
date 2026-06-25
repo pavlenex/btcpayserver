@@ -1,5 +1,143 @@
 # Changelog
 
+## 2.4.0
+
+### Breaking changes
+
+* LNBank and Lightning Charge backends are no longer supported.
+* If you use Boltcards Extension or Shopify v2 plugins, you will need to upgrade to the latest version of the plugin.
+
+### New features
+
+* Add multisig wallet setup (#7218) @thgO-O
+* Add a global search bar to improve navigation (#7183) @NicolasDorier
+* Add loginless and passwordless passkey authentication (#7172) @bitcoinbrisbane @NicolasDorier
+* Add more granular permissions for wallet management (#7357) @thgO-O
+* Subscription: Allow credit refunds via Pull Payments (#7284) @TChukwuleta
+* Subscription: Allow subscribers and customers to modify their notification email in the portal (#7300) @TChukwuleta
+* Point of Sale: Add configuration for tax on tips (#7298) @TChukwuleta
+* Point of Sale: Allow merchants to configure tax inclusion or exclusion (#7290) @TChukwuleta
+* Wallet: Add transaction search and date filters (#7133) @Sup3rlativ3
+* Add Bitcoin.co.ke rate provider (#7370) @sixside
+* Allow setting the maximum number of stores per user (#7320) @Abhijay007
+* Allow server admins to specify whether invited users subscribe to monetization (#7318) @TChukwuleta
+* Add separate `CanSendStoreEmail` permission for the store email API (#7345) @Abhijay007
+* Can bulk archive pull payments (#7400) @TChukwuleta
+
+### Fixes
+
+* Fix: Archiving invoices with a custom range filter returned error 403 (#7383 #7386) @NicolasDorier
+* Fix invalid Yadio rate handling (#7377) @BuffaloDyl
+* Fix iOS touch lockup on Keypad Point of Sale item buttons (#7379) @Wiredancer
+* Fix a corrupted table in the "Enter your xpub" screen @NicolasDorier
+* Fix searched text corrupting the search filter (#7338) @NicolasDorier
+* Fix BTCPay Server hanging on shutdown when Bitcoin support is disabled @NicolasDorier
+* Prevent 2FA code submission when the authenticator is not configured @NicolasDorier
+* Invoice Date Filter - Date Selector Widget closes the month list when clicked (#7384 #7388) @senutpal
+* Invoice Date Filter - Date Selector Widget had month dropdown with white text on a white background in Dark Mode (#7385) @senutpal
+* Refunds and pull payments were unable to make payments from LND 0.21.0 (https://github.com/btcpayserver/BTCPayServer.Lightning/pull/178) @warioishere
+* Uninstall button is missing for language packs (#7390 #7392) @teamssUTXO
+* Lightning invoice silently dropped when the node doesn't return amount on reconnection (#7402) @atharrva01
+* The Server Policies page would timeout when the server had too many apps (#7406) @NicolasDorier
+* Fix support for Core lightning 26.06 (#7412) @NicolasDorier
+
+### Improvements
+
+* Show missing permissions on the 403 page (#7387) @NicolasDorier
+* Adds inline QR and copy actions to the `Store Id` field on the Store Settings page. (#7396) @BuffaloDyl
+* Unnest UI routes for Pull Requests, Pull Payments, Invoices, and Apps (#7368) @NicolasDorier
+* Improve language pack selection (#7347) @teamssUTXO
+* Display Bylls as Bull Bitcoin in rate sources (#7364) @BullishNode
+
+### Miscellaneous
+
+* Remove deprecated Shopify Scripts integration (#6608) @NicolasDorier
+* Deprecate LCAD (#7363) @BullishNode
+* Remove support of some lightning backends: Lightning Charge, LNDHub, LNBank.
+
+## 2.3.9
+
+### Fixes
+
+* Fix: Server not recovering after a plugin crash (#7335) @NicolasDorier
+* Fix: Xpub became unparseable in 2.3.8 (#7334) @NicolasDorier
+
+## 2.3.8
+
+### New Features
+
+* API/Subscriptions: Add update offering route (#7296) @NicolasDorier
+* API/Subscriptions: Add update offering plan (#7297) @NicolasDorier
+* PoS: View-only store users can browse login links and invoices from the Update PoS page (#7305) @NicolasDorier
+* PoS: Store users can now generate a login QR code for any other store user (#7303) @NicolasDorier
+* Add LUD-21 (LNURL-pay Verify) support (#7250) @r0ckstardev
+* Add reporting for subscriptions (#7299) @TChukwuleta
+
+### Fixes
+
+* Fix: Reserved addresses page should not show addresses from old wallets (#7304) @thgO-O
+* Fix: QR code logins should not expire after only a few hours (#6801 #7293) @TChukwuleta
+* Fix: Avoid double translation of already localized view content (#7314 #7315) @Sanja22B
+* Fix: Phoenixd incorrectly marks payment as partial (#7325) @NicolasDorier
+* Fix: Top-Up invoices paid by BOLT11 should become settled (#7322 #7323) @notraiday
+
+### Miscellaneous
+
+* Remove support for importing keys to Bitcoin wallet via RPC (#7307) @NicolasDorier
+
+## 2.3.7
+
+This release is the first release using .NET 10.
+We invite plugin developers to [follow our guide](https://blog.btcpayserver.org/migrating-to-net10/) for a smoother migration.
+
+We recommend that users update their plugins after upgrading to 2.3.7.
+
+### New Features
+
+* Wallets: Add the ability to add comment to the transaction on the Send view (#6687 #7265) @Abhijay007
+* Subscriptions: Add manual subscription date editing for admins (#7231 #7257) @Abhijay007
+* Invoices: When the lightning provider supports it, top-up invoices now generate an amount-less BOLT11 instead of LNURL. (#7263) @bigg-bb
+* Plugins: Add the Update button to the disabled plugins section (#7051 #7260) @rollforsats
+* Subscriptions: SubscriberDisabled webhook now includes the reason why the subscriber has been disabled (#7270) @NicolasDorier
+* Greenfield: Implement UpdateCrowdfundApp endpoint and client method (#7202) @webiumsk
+* Subscriptions/API: Can delete subscribers via UI and API (#7206 #7254) @NicolasDorier
+* Invoices: Add RTL Language support (Arabic, Hebrew, and Farsi) for invoice checkout (#444 #7259) @Abhijay007
+* Invoices: Show payment method on receipt (#7174 #7226) @TChukwuleta
+* Subscriptions: Allow upgrade/downgrade at the period end (#7147 #7258) @TChukwuleta
+
+### Fixes
+
+* Fix: If an admin was accessing a user's store from a user list, it was returning error 404 @NicolasDorier
+* Emails: skip SMTP AUTH when Login and Password are empty (#7267 #7269) @ThomsenDrake
+* Fix: Wallet balance time period switch was broken (#7246 #7247) @Abhijay007
+* Exclude trial subscribers from monthly revenue (#7272 #7273) @Abhijay007
+
+## 2.3.6
+
+### New Features
+
+* Wallets: Add filtering using search bar on the label filter dropdown when labels exceed more than 20 (#7210 #7109) @rollforsats
+* API: Include a payment method in the Get invoices endpoint (#6757 #2394) @TChukwuleta
+* BTCPay Invoice Modal: Add a `paymentMethodId` parameter (#7209 #7208) @pwnfoo
+* Security: Include API key permission analysis metadata (#6771 #3196) @TChukwuleta
+* A plugin can now create new permission policies (#7215 #7156) @NicolasDorier
+
+### Fixes
+
+* Fix: Dashboard layout issues on mobile, regression from 2.3.5 (#7223 #7217) @NicolasDorier
+* Fix: Subscriber portal sessions can be created again via API (#7200 #7198) @NicolasDorier
+* Fix: Can't upgrade/downgrade a Lifetime subscription (#7194 #7193) @NicolasDorier
+
+### Improvements
+
+* Update Wasabi wallet folder access instructions (#7192) @nopara73
+* Security: Apply CSRF protection globally to UI controllers (#7199) @NicolasDorier
+* Update many missing translations from the language packs @Abhijay007
+
+### Regression
+
+* Revert: Dashboard: Support multi-crypto wallet balance widgets (#7223) @NicolasDorier
+
 ## 2.3.5
 
 ### New Features

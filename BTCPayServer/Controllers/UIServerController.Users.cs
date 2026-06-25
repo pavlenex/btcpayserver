@@ -8,10 +8,12 @@ using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Data;
 using BTCPayServer.Events;
 using BTCPayServer.Models.ServerViewModels;
+using BTCPayServer.Plugins.Monetization;
 using BTCPayServer.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Internal;
 
 namespace BTCPayServer.Controllers
 {
@@ -95,11 +97,14 @@ namespace BTCPayServer.Controllers
                 Id = user.Id,
                 Email = user.Email,
                 Name = blob?.Name,
+                BypassMonetization = user.BypassMonetization,
+                MonetizationEnabled = _monetizationSettings.Settings.IsSetup(),
                 InvitationUrl = string.IsNullOrEmpty(blob?.InvitationToken) ? null : _callbackGenerator.ForInvitation(user.Id, blob.InvitationToken),
                 ImageUrl = string.IsNullOrEmpty(blob?.ImageUrl) ? null : await _uriResolver.Resolve(Request.GetAbsoluteRootUri(), UnresolvedUri.Create(blob.ImageUrl)),
                 EmailConfirmed = user.RequiresEmailConfirmation ? user.EmailConfirmed : null,
                 Approved = user.RequiresApproval ? user.Approved : null,
-                IsAdmin = Roles.HasServerAdmin(roles)
+                IsAdmin = Roles.HasServerAdmin(roles),
+                StoreQuota = blob?.StoreQuota
             };
             return View(model);
         }
@@ -130,6 +135,17 @@ namespace BTCPayServer.Controllers
             if (blob.Name != viewModel.Name)
             {
                 blob.Name = viewModel.Name;
+                propertiesChanged = true;
+            }
+
+            if (blob.StoreQuota != viewModel.StoreQuota)
+            {
+                if (viewModel.StoreQuota is < 0)
+                {
+                    ModelState.AddModelError(nameof(viewModel.StoreQuota), StringLocalizer["Store quota must be 0 or greater."].Value);
+                    return View(viewModel);
+                }
+                blob.StoreQuota = viewModel.StoreQuota;
                 propertiesChanged = true;
             }
 
@@ -173,9 +189,18 @@ namespace BTCPayServer.Controllers
                 adminStatusChanged = await _userService.SetAdminUser(user.Id, viewModel.IsAdmin);
             }
 
+            var bypassMonetizationChanged = user.BypassMonetization != viewModel.BypassMonetization;
+            if (bypassMonetizationChanged)
+            {
+                user.BypassMonetization = viewModel.BypassMonetization;
+                propertiesChanged = true;
+            }
+
             if (propertiesChanged is true)
             {
                 propertiesChanged = await _UserManager.UpdateAsync(user) is { Succeeded: true };
+                if (propertiesChanged is true && bypassMonetizationChanged)
+                    _eventAggregator.Publish(new UserEvent.BypassMonetizationChanged(user, viewModel.BypassMonetization, Request.GetRequestBaseUrl()));
             }
 
             if (propertiesChanged.HasValue || adminStatusChanged.HasValue || approvalStatusChanged.HasValue)
@@ -223,9 +248,12 @@ namespace BTCPayServer.Controllers
         public async Task<IActionResult> CreateUser()
         {
             await PrepareCreateUserViewData();
+            var monetizationEnabled = _monetizationSettings.Settings.IsSetup();
             var vm = new RegisterFromAdminViewModel
             {
-                SendInvitationEmail = ViewData["CanSendEmail"] is true
+                SendInvitationEmail = ViewData["CanSendEmail"] is true,
+                BypassMonetization = !monetizationEnabled,
+                MonetizationEnabled = monetizationEnabled
             };
             return View(vm);
         }
@@ -234,12 +262,14 @@ namespace BTCPayServer.Controllers
         public async Task<IActionResult> CreateUser(RegisterFromAdminViewModel model)
         {
             await PrepareCreateUserViewData();
+            model.MonetizationEnabled = _monetizationSettings.Settings.IsSetup();
             if (!_Options.CheatMode)
                 model.IsAdmin = false;
             if (ModelState.IsValid)
             {
                 var user = new ApplicationUser
                 {
+                    BypassMonetization = model.BypassMonetization,
                     UserName = model.Email,
                     Email = model.Email,
                     EmailConfirmed = model.EmailConfirmed,
@@ -264,15 +294,15 @@ namespace BTCPayServer.Controllers
                     var evt = (UserEvent.Invited)await UserEvent.Registered.Create(user, currentUser, _callbackGenerator, sendEmail);
                     _eventAggregator.Publish(evt);
 
-                    var info = sendEmail
-                        ? "An invitation email has been sent. You may alternatively"
-                        : "An invitation email has not been sent. You need to";
+                    var inviteInfo = sendEmail
+                        ? StringLocalizer["An invitation email has been sent.<br/>You may alternatively share this link with them: <a class='alert-link' href='{0}'>{0}</a>", evt.InvitationLink]
+                        : StringLocalizer["An invitation email has not been sent.<br/>You need to share this link with them: <a class='alert-link' href='{0}'>{0}</a>", evt.InvitationLink];
 
                     TempData.SetStatusMessageModel(new StatusMessageModel
                     {
                         Severity = StatusMessageModel.StatusSeverity.Success,
                         AllowDismiss = false,
-                        Html = $"Account successfully created. {info} share this link with them:<br/>{evt.InvitationLink}"
+                        Html = $"{StringLocalizer["Account successfully created."]} {inviteInfo}"
                     });
                     return RedirectToAction(nameof(User), new { userId = user.Id });
                 }
@@ -301,7 +331,7 @@ namespace BTCPayServer.Controllers
                 if (await _userService.IsUserTheOnlyOneAdmin(loginContext))
                 {
                     return View("Confirm", new ConfirmModel(StringLocalizer["Delete admin"],
-                        $"Unable to proceed: As the user <strong>{Html.Encode(user.Email)}</strong> is the last enabled admin, it cannot be removed."));
+                        StringLocalizer["Unable to proceed: As the user <strong>{0}</strong> is the last enabled admin, it cannot be removed.", Html.Encode(user.Email)]));
                 }
 
                 return View("Confirm", new ConfirmModel(StringLocalizer["Delete admin"],
@@ -309,7 +339,7 @@ namespace BTCPayServer.Controllers
                     StringLocalizer["Delete"]));
             }
 
-            return View("Confirm", new ConfirmModel(StringLocalizer["Delete user"], $"The user <strong>{Html.Encode(user.Email)}</strong> will be permanently deleted. Are you sure?", StringLocalizer["Delete"]));
+            return View("Confirm", new ConfirmModel(StringLocalizer["Delete user"], StringLocalizer["The user <strong>{0}</strong> will be permanently deleted. Are you sure?", Html.Encode(user.Email)], StringLocalizer["Delete"]));
         }
 
         [HttpPost("server/users/{userId}/delete")]
@@ -336,9 +366,14 @@ namespace BTCPayServer.Controllers
             if (!enable && await _userService.IsUserTheOnlyOneAdmin(loginContext))
             {
                 return View("Confirm", new ConfirmModel(StringLocalizer["Disable admin"],
-                    $"Unable to proceed: As the user <strong>{Html.Encode(user.Email)}</strong> is the last enabled admin, it cannot be disabled."));
+                    StringLocalizer["Unable to proceed: As the user <strong>{0}</strong> is the last enabled admin, it cannot be disabled.", Html.Encode(user.Email)]));
             }
-            return View("Confirm", new ConfirmModel($"{(enable ? "Enable" : "Disable")} user", $"The user <strong>{Html.Encode(user.Email)}</strong> will be {(enable ? "enabled" : "disabled")}. Are you sure?", (enable ? StringLocalizer["Enable"] : StringLocalizer["Disable"])));
+            return View("Confirm", new ConfirmModel(
+                enable ? StringLocalizer["Enable user"] : StringLocalizer["Disable user"],
+                enable
+                    ? StringLocalizer["The user <strong>{0}</strong> will be enabled. Are you sure?", Html.Encode(user.Email)]
+                    : StringLocalizer["The user <strong>{0}</strong> will be disabled. Are you sure?", Html.Encode(user.Email)],
+                enable ? StringLocalizer["Enable"] : StringLocalizer["Disable"]));
         }
 
         [HttpPost("server/users/{userId}/toggle")]
@@ -373,7 +408,12 @@ namespace BTCPayServer.Controllers
             if (user == null)
                 return NotFound();
 
-            return View("Confirm", new ConfirmModel($"{(approved ? StringLocalizer["Approve"] : StringLocalizer["Unapprove"])} user", $"The user <strong>{Html.Encode(user.Email)}</strong> will be {(approved ? "approved" : "unapproved")}. Are you sure?", (approved ? StringLocalizer["Approve"] : StringLocalizer["Unapprove"])));
+            return View("Confirm", new ConfirmModel(
+                approved ? StringLocalizer["Approve user"] : StringLocalizer["Unapprove user"],
+                approved
+                    ? StringLocalizer["This will approve the user <strong>{0}</strong>.", Html.Encode(user.Email)]
+                    : StringLocalizer["This will unapprove the user <strong>{0}</strong>.", Html.Encode(user.Email)],
+                approved ? StringLocalizer["Approve"] : StringLocalizer["Unapprove"]));
         }
 
         [HttpPost("server/users/{userId}/approve")]
@@ -399,7 +439,7 @@ namespace BTCPayServer.Controllers
             if (user == null)
                 return NotFound();
 
-            return View("Confirm", new ConfirmModel(StringLocalizer["Send verification email"], $"This will send a verification email to <strong>{Html.Encode(user.Email)}</strong>.", StringLocalizer["Send"]));
+            return View("Confirm", new ConfirmModel(StringLocalizer["Send verification email"], StringLocalizer["This will send a verification email to <strong>{0}</strong>.", Html.Encode(user.Email)], StringLocalizer["Send"]));
         }
 
         [HttpPost("server/users/{userId}/verification-email")]
@@ -467,5 +507,9 @@ namespace BTCPayServer.Controllers
 
         [Display(Name = "Send invitation email")]
         public bool SendInvitationEmail { get; set; } = true;
+
+        [Display(Name = "Bypass monetization for this user")]
+        public bool BypassMonetization { get; set; }
+        public bool MonetizationEnabled { get; set; }
     }
 }

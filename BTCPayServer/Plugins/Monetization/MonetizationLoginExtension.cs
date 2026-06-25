@@ -1,10 +1,6 @@
 #nullable enable
-using System;
-using System.Linq;
 using System.Threading.Tasks;
 using BTCPayServer.Data;
-using BTCPayServer.Data.Subscriptions;
-using BTCPayServer.Plugins.Subscriptions;
 using BTCPayServer.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
@@ -19,6 +15,9 @@ public class MonetizationLoginExtension(
 {
     public override async Task Check(UserService.CanLoginContext context)
     {
+        if (context.User.BypassMonetization)
+            return;
+
         if (settings.Settings is { OfferingId: { } offeringId })
         {
             await using var ctx = dbContextFactory.CreateContext();

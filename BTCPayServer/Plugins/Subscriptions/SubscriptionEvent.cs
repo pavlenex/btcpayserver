@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 using BTCPayServer.Abstractions;
 using BTCPayServer.Data.Subscriptions;
 
@@ -32,6 +32,15 @@ public class SubscriptionEvent
         public override string ToString() => $"Subscriber {Subscriber.ToNiceString()} debited (Amount: {Amount} {Currency}, New Total: {Total} {Currency})";
     }
 
+    public class CreditRefunded(SubscriberData subscriber, decimal amount, string currency, string pullPaymentId, RequestBaseUrl requestBaseUrl) : SubscriberEvent(subscriber)
+    {
+        public decimal Amount { get; } = amount;
+        public string Currency { get; } = currency;
+        public string PullPaymentId { get; } = pullPaymentId;
+        public RequestBaseUrl RequestBaseUrl { get; } = requestBaseUrl;
+        public override string ToString() => $"Subscriber {Subscriber.ToNiceString()} credit refunded (Amount: {Amount} {Currency})";
+    }
+
     public class SubscriberActivated(SubscriberData subscriber) : SubscriberEvent(subscriber)
     {
         public override string ToString() => $"Subscriber {Subscriber.ToNiceString()} activated";
@@ -43,8 +52,16 @@ public class SubscriptionEvent
         public override string ToString() => $"Subscriber {Subscriber.ToNiceString()} changed phase from {PreviousPhase} to {Subscriber.Phase}";
     }
 
-    public class SubscriberDisabled(SubscriberData subscriber) : SubscriberEvent(subscriber)
+    public enum DisabledReason
     {
+        Suspension,
+        Expired
+    }
+
+    public class SubscriberDisabled(SubscriberData subscriber, DisabledReason reason, string? suspensionReason = null) : SubscriberEvent(subscriber)
+    {
+        public DisabledReason Reason { get; } = reason;
+        public string? SuspensionReason { get; } = reason is DisabledReason.Suspension ? suspensionReason : null;
         public override string ToString() => $"Subscriber {Subscriber.ToNiceString()} disabled";
     }
 
@@ -70,7 +87,7 @@ public class SubscriptionEvent
 
     public class PlanStarted(SubscriberData subscriber, PlanData previous) : SubscriberEvent(subscriber)
     {
-        public PlanData PreviousPlan { get; set; } = previous;
+        public PlanData PreviousPlan { get; } = previous;
         public bool AutoRenew { get; set; }
         public override string ToString() => $"Subscriber {Subscriber.ToNiceString()} started plan";
     }

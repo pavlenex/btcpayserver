@@ -1,5 +1,6 @@
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
@@ -10,6 +11,7 @@ using System.Net;
 using System.Net.WebSockets;
 using System.Reflection;
 using System.Security.Claims;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
@@ -26,13 +28,16 @@ using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Hwi;
 using BTCPayServer.Lightning;
+using BTCPayServer.Lightning.CLightning;
+using BTCPayServer.Lightning.Eclair;
+using BTCPayServer.Lightning.LND;
+using BTCPayServer.Lightning.Phoenixd;
 using BTCPayServer.Models;
 using BTCPayServer.Models.StoreViewModels;
 using BTCPayServer.NTag424;
 using BTCPayServer.Payments;
 using BTCPayServer.Payments.Bitcoin;
 using BTCPayServer.Payments.Lightning;
-using BTCPayServer.Security;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Reporting;
@@ -262,20 +267,18 @@ namespace BTCPayServer
 
         [Obsolete("Use GetDisplayName(this ILightningClient client, string connectionString) instead")]
         public static string GetDisplayName(this ILightningClient client) => GetDisplayName(client, client.ToString());
+
         public static string GetDisplayName(this ILightningClient client, string connectionString)
-        {
-            if (client is IExtendedLightningClient { DisplayName: { } displayName })
-                    return displayName;
-            var kv = client.ExtractValues(connectionString);
-            if (!kv.TryGetValue("type", out var type))
-                return "???";
-            var lncType = typeof(LightningConnectionType);
-            var fields = lncType.GetFields(BindingFlags.Public | BindingFlags.Static);
-            var field = fields.FirstOrDefault(f => f.GetValue(lncType)?.ToString() == type);
-            if (field == null) return type;
-            DisplayAttribute attr = field.GetCustomAttribute<DisplayAttribute>();
-            return attr?.Name ?? type;
-        }
+            => client switch
+            {
+                CLightningClient _ => "Core Lightning",
+                LndClient => "LND",
+                EclairLightningClient => "Eclair",
+                PhoenixdLightningClient => "Phoenix",
+                IExtendedLightningClient { DisplayName: { } n } => n,
+                _ when client.ExtractValues(connectionString).TryGetValue("type", out var t) => t,
+                _ => client.GetType().Name
+            };
 
         private static bool TryParseLegacy(string str, out Dictionary<string, string> connectionString)
         {
@@ -457,12 +460,43 @@ namespace BTCPayServer
             return services;
         }
 
+        /// <summary>
+        /// Add a raw SQL migration to run when BTCPay Server starts
+        /// </summary>
+        /// <param name="services"></param>
+        /// <param name="migrationId">A unique id for the migration. Migrations execute in alphabetic order, so we suggest to prefix the date of creation of the migration. (eg. 20260106_cleanupappidentities)</param>
+        /// <param name="sql">The raw SQL of the migration</param>
+        /// <returns></returns>
+        public static IServiceCollection AddMigration(this IServiceCollection services, string migrationId, string sql)
+        {
+            services.TryAddSingleton<IMigrationExecutor, MigrationExecutor<ApplicationDbContext>>();
+            services.AddSingleton<MigrationBase<ApplicationDbContext>, RawSqlMigration>(_ => new RawSqlMigration(migrationId, sql));
+            return services;
+        }
+
         public static IServiceCollection AddMigration<TDbContext, TMigration>(this IServiceCollection services)
             where TDbContext : DbContext
             where TMigration : MigrationBase<TDbContext>
         {
             services.TryAddSingleton<IMigrationExecutor, MigrationExecutor<TDbContext>>();
             services.AddSingleton<MigrationBase<TDbContext>, TMigration>();
+            return services;
+        }
+
+        public static IServiceCollection AddPolicyDefinitions(this IServiceCollection services, params PolicyDefinition[] definitions)
+        {
+            if (definitions == null)
+                return services;
+            foreach (var definition in definitions)
+            {
+                if (definition != null)
+                    services.AddSingleton(definition);
+            }
+            var strings = definitions
+                .SelectMany(d => new[] {d.Display?.Title, d.Display?.Description, d.ScopeDisplay?.Title, d.ScopeDisplay?.Description})
+                .Where(d => d is not null)
+                .ToArray();
+            services.AddDefaultTranslations(strings);
             return services;
         }
 
@@ -693,38 +727,6 @@ namespace BTCPayServer
             return uri.DnsSafeHost.EndsWith(".onion", StringComparison.OrdinalIgnoreCase);
         }
 
-        public static string GetSIN(this ClaimsPrincipal principal)
-        {
-            return principal.Claims.Where(c => c.Type == Security.Bitpay.BitpayClaims.SIN).Select(c => c.Value).FirstOrDefault();
-        }
-
-        public static void SetIsBitpayAPI(this HttpContext ctx, bool value)
-        {
-            NBitcoin.Extensions.TryAdd(ctx.Items, "IsBitpayAPI", value);
-        }
-
-        public static bool GetIsBitpayAPI(this HttpContext ctx)
-        {
-            return ctx.Items.TryGetValue("IsBitpayAPI", out object obj) &&
-                  obj is bool b && b;
-        }
-
-        public static void SetBitpayAuth(this HttpContext ctx, (string Signature, String Id, String Authorization) value)
-        {
-            NBitcoin.Extensions.TryAdd(ctx.Items, "BitpayAuth", value);
-        }
-
-        public static bool TryGetBitpayAuth(this HttpContext ctx, out (string Signature, String Id, String Authorization) result)
-        {
-            if (ctx.Items.TryGetValue("BitpayAuth", out object obj))
-            {
-                result = ((string Signature, String Id, String Authorization))obj;
-                return true;
-            }
-            result = default;
-            return false;
-        }
-
         public static UserPrefsCookie GetUserPrefsCookie(this HttpContext ctx)
         {
             var prefCookie = new UserPrefsCookie();
@@ -746,7 +748,7 @@ namespace BTCPayServer
             ctx.Response.Cookies.Delete(nameof(UserPrefsCookie));
         }
 
-        private static void SetCurrentStoreId(this HttpContext ctx, string storeId)
+        public static void SetPreferredStoreId(this HttpContext ctx, string storeId)
         {
             var prefCookie = ctx.GetUserPrefsCookie();
             if (prefCookie.CurrentStoreId != storeId)
@@ -756,70 +758,124 @@ namespace BTCPayServer
             }
         }
 
-        public static string GetCurrentStoreId(this HttpContext ctx)
+#nullable enable
+        /// <summary>
+        /// Returns the user ID or empty string
+        /// </summary>
+        /// <param name="principal"></param>
+        /// <returns></returns>
+        public static string GetId(this IPrincipal? principal)
+        => GetIdOrNull(principal) ?? "";
+        public static string? GetIdOrNull(this IPrincipal? principal)
         {
-            return ctx.GetImplicitStoreId() ?? ctx.GetUserPrefsCookie()?.CurrentStoreId;
+            var claimsPrincipal = principal as ClaimsPrincipal;
+            if (claimsPrincipal is null)
+                return null;
+            return claimsPrincipal.FindFirstValue(ClaimTypes.NameIdentifier) ?? null;
         }
 
+        public static StoreData AddCachedStoreData(this HttpContext ctx, StoreData storeData)
+        {
+            if (!ctx.Items.TryGetValue("BTCPAY.CACHEDSTOREDATA", out var item) ||
+                item is not ConcurrentDictionary<string, StoreData> dictionary)
+            {
+                dictionary = new ConcurrentDictionary<string, StoreData>();
+                ctx.Items["BTCPAY.CACHEDSTOREDATA"] = dictionary;
+            }
+            dictionary.TryAdd(storeData.Id, storeData);
+            return storeData;
+        }
+        public static StoreData? GetCachedStoreData(this HttpContext ctx, string storeId)
+        {
+            if (!ctx.Items.TryGetValue("BTCPAY.CACHEDSTOREDATA", out var item) ||
+                item is not ConcurrentDictionary<string, StoreData> dictionary)
+                return null;
+            dictionary.TryGetValue(storeId, out var storeData);
+            return storeData;
+        }
+        public static StoreData? GetNavStoreData(this HttpContext ctx)
+            => ctx.Items.TryGet("BTCPAY.NAVSTOREDATA") as StoreData;
+        public static void SetNavStoreData(this HttpContext ctx, StoreData? storeData)
+            => ctx.Items["BTCPAY.NAVSTOREDATA"] = storeData;
+
+        public static IDisposable SwitchStoreData(this HttpContext ctx, StoreData? storeData)
+        {
+            var old = ctx.GetStoreDataOrNull();
+            ctx.SetStoreData(storeData);
+            return new ActionDisposable(() => { ctx.SetStoreData(old); });
+        }
+        public static IDisposable SwitchNavRendering(this HttpContext ctx)
+        {
+            var old = ctx.Items["BTCPAY.NAVRENDERING"] ;
+            ctx.Items["BTCPAY.NAVRENDERING"] = true;
+            return new ActionDisposable(() => { ctx.Items["BTCPAY.NAVRENDERING"] = old; });
+        }
+
+        /// <summary>
+        /// Set after authorization succeed. If your route is authorized, this is guaranteed to not be null.
+        /// </summary>
+        /// <param name="ctx"></param>
+        /// <returns></returns>
+        public static StoreData? GetStoreDataOrNull(this HttpContext ctx)
+            => ctx.Items.TryGet("BTCPAY.STOREDATA") as StoreData;
+        /// <summary>
+        /// Set after authorization succeed. If your route is authorized, this is guaranteed to not throw.
+        /// </summary>
+        /// <param name="ctx"></param>
+        /// <returns></returns>
         public static StoreData GetStoreData(this HttpContext ctx)
-        {
-            return ctx.Items.TryGet("BTCPAY.STOREDATA") as StoreData;
-        }
-
-        public static void SetStoreData(this HttpContext ctx, StoreData storeData)
-        {
-            ctx.Items["BTCPAY.STOREDATA"] = storeData;
-
-            SetCurrentStoreId(ctx, storeData.Id);
-        }
+        // Give times for extensions to switch to MainNavViewModel.Store
+        // or HttpContext.GetStoreDataOrNull
+            => GetStoreDataOrNull(ctx) ??
+               (ctx.Items["BTCPAY.NAVRENDERING"]  is true ? null!
+               : throw new InvalidOperationException("StoreData is not set"));
+        public static void SetStoreData(this HttpContext ctx, StoreData? storeData)
+            => ctx.Items["BTCPAY.STOREDATA"] = storeData;
+        public static string? GetCurrentStoreId(this HttpContext ctx)
+            => GetStoreDataOrNull(ctx)?.Id;
 
         public static StoreData[] GetStoresData(this HttpContext ctx)
-        {
-            return ctx.Items.TryGet("BTCPAY.STORESDATA") as StoreData[];
-        }
+            => ctx.Items.TryGet("BTCPAY.STORESDATA") as StoreData[] ?? Array.Empty<StoreData>();
+        public static void SetStoresData(this HttpContext ctx, StoreData[]? storeData)
+            => ctx.Items["BTCPAY.STORESDATA"] = storeData;
+        /// <summary>
+        /// Set after authorization succeed if invoiceId is present in the route. If not null, the invoice is guaranteed to be from the current store (GetStoreData).
+        /// </summary>
+        /// <param name="ctx"></param>
+        /// <returns></returns>
+        public static InvoiceEntity? GetInvoiceDataOrNull(this HttpContext ctx)
+        => ctx.Items.TryGet("BTCPAY.INVOICEDATA") as InvoiceEntity;
 
-        public static void SetStoresData(this HttpContext ctx, StoreData[] storeData)
-        {
-            ctx.Items["BTCPAY.STORESDATA"] = storeData;
-        }
 
-        public static InvoiceEntity GetInvoiceData(this HttpContext ctx)
-        {
-            return ctx.Items.TryGet("BTCPAY.INVOICEDATA") as InvoiceEntity;
-        }
+        public static void SetInvoiceData(this HttpContext ctx, InvoiceEntity? invoiceEntity)
+        => ctx.Items["BTCPAY.INVOICEDATA"] = invoiceEntity;
 
-        public static void SetInvoiceData(this HttpContext ctx, InvoiceEntity invoiceEntity)
-        {
-            ctx.Items["BTCPAY.INVOICEDATA"] = invoiceEntity;
-        }
+        public static PaymentRequestData? GetPaymentRequestDataOrNull(this HttpContext ctx)
+        => ctx.Items.TryGet("BTCPAY.PAYMENTREQUESTDATA") as PaymentRequestData;
+        public static PaymentRequestData? GetPaymentRequestData(this HttpContext ctx)
+            => GetPaymentRequestDataOrNull(ctx) ?? throw new InvalidOperationException("BTCPAY.PAYMENTREQUESTDATA is not set");
 
-        public static PaymentRequestData GetPaymentRequestData(this HttpContext ctx)
-        {
-            return ctx.Items.TryGet("BTCPAY.PAYMENTREQUESTDATA") as PaymentRequestData;
-        }
-
-        public static void SetPaymentRequestData(this HttpContext ctx, PaymentRequestData paymentRequestData)
+        public static void SetPaymentRequestData(this HttpContext ctx, PaymentRequestData? paymentRequestData)
         {
             ctx.Items["BTCPAY.PAYMENTREQUESTDATA"] = paymentRequestData;
         }
 
-        public static AppData GetAppData(this HttpContext ctx)
-        {
-            return ctx.Items.TryGet("BTCPAY.APPDATA") as AppData;
-        }
+        public static PullPaymentData? GetPullPaymentDataOrNull(this HttpContext ctx)
+            => ctx.Items.TryGet("BTCPAY.PULLPAYMENTDATA") as PullPaymentData;
 
-        public static void SetAppData(this HttpContext ctx, AppData appData)
+        public static void SetPullPaymentData(this HttpContext ctx, PullPaymentData? pullPaymentData)
+            => ctx.Items["BTCPAY.PULLPAYMENTDATA"] = pullPaymentData;
+
+        public static AppData? GetAppData(this HttpContext ctx)
+            => GetAppDataOrNull(ctx) ?? throw new InvalidOperationException("AppData is not set");
+        public static AppData? GetAppDataOrNull(this HttpContext ctx)
+        => ctx.Items.TryGet("BTCPAY.APPDATA") as AppData;
+
+        public static void SetAppData(this HttpContext ctx, AppData? appData)
         {
             ctx.Items["BTCPAY.APPDATA"] = appData;
         }
-
-        public static bool SupportChain(this IConfiguration conf, string cryptoCode)
-        {
-            var supportedChains = conf.GetOrDefault<string>("chains", "btc")
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => t.ToUpperInvariant()).ToHashSet();
-            return supportedChains.Contains(cryptoCode.ToUpperInvariant());
-        }
+#nullable restore
 
         class ParameterReplacer : ExpressionVisitor
         {

@@ -1,20 +1,15 @@
 #nullable enable
 using System;
-using System.Reflection.Emit;
 using System.Threading.Tasks;
 using BTCPayServer.Data;
 using BTCPayServer.Abstractions.Extensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Mvc;
-using NBitcoin.Altcoins.ArgoneumInternals;
 using BTCPayServer.Controllers;
-using Microsoft.AspNetCore.Mvc.Routing;
-using Microsoft.AspNetCore.Http.Extensions;
+using BTCPayServer.Plugins.Wallets;
 using NBitcoin.DataEncoders;
-using System.Runtime.CompilerServices;
 using BTCPayServer.Abstractions;
 
 namespace BTCPayServer.Services
@@ -81,7 +76,7 @@ namespace BTCPayServer.Services
         => LinkGenerator.GetUriByAction(
             action: nameof(UIWalletsController.WalletTransactions),
             controller: "UIWallets",
-            values: new { walletId = walletId.ToString() },
+            values: new { area = WalletsPlugin.Area, walletId = walletId.ToString() },
             GetRequestBaseUrl());
 
         public string PaymentRequestByIdLink(string payReqId)

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using BTCPayServer.Payments;
 using NBitcoin;
 using NBXplorer.Client;
 using NBXplorer.DerivationStrategy;
@@ -147,6 +146,7 @@ namespace BTCPayServer
     {
         public HDFingerprint? RootFingerprint { get; set; }
         public KeyPath AccountKeyPath { get; set; }
+        public string SignerUserId { get; set; }
 
         public RootedKeyPath GetRootedKeyPath()
         {

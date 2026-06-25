@@ -1,11 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Models;
 using Microsoft.AspNetCore.Mvc.Rendering;
-using Microsoft.Extensions.Localization;
 
 namespace BTCPayServer.Plugins.PointOfSale.Models
 {
@@ -86,7 +84,9 @@ namespace BTCPayServer.Plugins.PointOfSale.Models
         public string Description { get; set; }
         public SelectList AllCategories { get; set; }
         public string StoreId { get; set; }
+        public bool TaxIncludedInPrice { get; set; }
         public decimal DefaultTaxRate { get; set; }
+        public decimal? TipTaxRate { get; set; }
         public string NotAvailable { get; set; }
     }
 }

@@ -1,13 +1,8 @@
-using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
 using System.Net.Http;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Rating;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace BTCPayServer.Services.Rates
@@ -32,7 +27,7 @@ namespace BTCPayServer.Services.Rates
             {
                 string name = ((JProperty)item).Name;
                 var value = results[name].Value<decimal?>();
-                if (value.HasValue)
+                if (value is > 0m)
                     list.Add(new PairRate(new CurrencyPair("BTC", name), new BidAsk(value.Value)));
             }
 

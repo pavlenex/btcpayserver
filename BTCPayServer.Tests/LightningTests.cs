@@ -8,7 +8,6 @@ using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
 using BTCPayServer.Events;
 using BTCPayServer.Lightning;
-using BTCPayServer.Lightning.Charge;
 using BTCPayServer.Models.StoreViewModels;
 using BTCPayServer.Payments;
 using BTCPayServer.Payments.Lightning;
@@ -19,10 +18,10 @@ using NBitcoin;
 using NBitpayClient;
 using Newtonsoft.Json.Linq;
 using Xunit;
-using Xunit.Abstractions;
 using static Microsoft.Playwright.Assertions;
 using CreateInvoiceRequest = BTCPayServer.Client.Models.CreateInvoiceRequest;
 using BTCPayServer.Data;
+using BTCPayServer.Lightning.CLightning;
 using LightningAddressData = BTCPayServer.Client.Models.LightningAddressData;
 
 namespace BTCPayServer.Tests;
@@ -41,7 +40,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         await tester.EnsureChannelsSetup();
         var user = tester.NewAccount();
         await user.GrantAccessAsync(true);
-        user.RegisterLightningNode("BTC", LightningConnectionType.CLightning);
+        user.RegisterLightningNode("BTC", LightningTestImplementation.CoreLightning);
 
         var client = await user.CreateClient(Policies.Unrestricted);
         var invoices = new Task<Client.Models.InvoiceData>[5];
@@ -65,7 +64,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         var pm = new InvoicePaymentMethodDataModel[invoices.Length];
         for (int i = 0; i < invoices.Length; i++)
         {
-            pm[i] = Assert.Single(await client.GetInvoicePaymentMethods(user.StoreId, (await invoices[i]).Id));
+            pm[i] = Assert.Single(await client.GetInvoicePaymentMethods((await invoices[i]).Id));
             Assert.True(pm[i].AdditionalData.HasValues);
         }
 
@@ -85,7 +84,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
             Assert.NotNull(resp.Details.Preimage);
             await TestUtils.EventuallyAsync(async () =>
             {
-                pm[i] = Assert.Single(await client.GetInvoicePaymentMethods(user.StoreId, (await invoices[i]).Id));
+                pm[i] = Assert.Single(await client.GetInvoicePaymentMethods((await invoices[i]).Id));
                 Assert.True(pm[i].AdditionalData.HasValues);
                 Assert.Equal(resp.Details.PaymentHash.ToString(), ((JObject)pm[i].AdditionalData).GetValue("paymentHash"));
                 Assert.Equal(resp.Details.Preimage.ToString(), ((JObject)pm[i].AdditionalData).GetValue("preimage"));
@@ -104,11 +103,11 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         await tester.EnsureChannelsSetup();
         var user = tester.NewAccount();
         await user.GrantAccessAsync(true);
-        user.RegisterLightningNode("BTC", LightningConnectionType.CLightning, false);
+        user.RegisterLightningNode("BTC", LightningTestImplementation.CoreLightning, false);
 
         var merchant = tester.NewAccount();
         await merchant.GrantAccessAsync(true);
-        merchant.RegisterLightningNode("BTC", LightningConnectionType.LndREST);
+        merchant.RegisterLightningNode("BTC", LightningTestImplementation.LND);
         var merchantClient = await merchant.CreateClient($"{Policies.CanUseLightningNodeInStore}:{merchant.StoreId}");
         var merchantInvoice = await merchantClient.CreateLightningInvoice(merchant.StoreId, "BTC",
             new CreateLightningInvoiceRequest(LightMoney.Satoshis(1_000), "hey", TimeSpan.FromSeconds(60)));
@@ -273,7 +272,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         var user = tester.NewAccount();
         await user.GrantAccessAsync(true);
 
-        var types = new[] { LightningConnectionType.LndREST, LightningConnectionType.CLightning };
+        var types = new[] { LightningTestImplementation.LND, LightningTestImplementation.CoreLightning };
         foreach (var type in types)
         {
             user.RegisterLightningNode("BTC", type);
@@ -615,7 +614,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
     [Trait("Lightning", "Lightning")]
     public async Task CanSendLightningPaymentCLightning()
     {
-        await ProcessLightningPayment(LightningConnectionType.CLightning);
+        await ProcessLightningPayment(LightningTestImplementation.CoreLightning);
     }
 
     [Fact(Timeout = 60 * 2 * 1000)]
@@ -623,10 +622,10 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
     [Trait("Lightning", "Lightning")]
     public async Task CanSendLightningPaymentLnd()
     {
-        await ProcessLightningPayment(LightningConnectionType.LndREST);
+        await ProcessLightningPayment(LightningTestImplementation.LND);
     }
 
-    async Task ProcessLightningPayment(string type)
+    async Task ProcessLightningPayment(LightningTestImplementation type)
     {
         // For easier debugging and testing
         // LightningLikePaymentHandler.LIGHTNING_TIMEOUT = int.MaxValue;
@@ -682,7 +681,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         var user = tester.NewAccount();
         await user.GrantAccessAsync(true);
         await user.RegisterDerivationSchemeAsync("BTC");
-        await user.RegisterLightningNodeAsync("BTC", LightningConnectionType.CLightning);
+        await user.RegisterLightningNodeAsync("BTC", LightningTestImplementation.CoreLightning);
         await user.SetNetworkFeeMode(NetworkFeeMode.Never);
         await user.ModifyGeneralSettings(p => p.SpeedPolicy = SpeedPolicy.HighSpeed);
         var invoice = await user.BitPay.CreateInvoiceAsync(new Invoice(0.0001m, "BTC"));
@@ -749,9 +748,10 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         Assert.IsType<ViewResult>(storeResponse);
         Assert.IsType<ViewResult>(storeController.SetupLightningNode(user.StoreId, "BTC"));
 
+        var address = ((CLightningClient)tester.CustomerLightningD).Address.AbsoluteUri;
         await storeController.SetupLightningNode(user.StoreId, new LightningNodeViewModel
         {
-            ConnectionString = $"type=charge;server={tester.MerchantCharge.Client.Uri.AbsoluteUri};allowinsecure=true",
+            ConnectionString = $"type=clightning;server={address}",
             SkipPortTest = true // We can't test this as the IP can't be resolved by the test host :(
         }, "test", "BTC");
         Assert.False(storeController.TempData.ContainsKey(WellKnownTempData.ErrorMessage));
@@ -761,12 +761,12 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         Assert.IsType<RedirectToActionResult>(await storeController.SetupLightningNode(user.StoreId,
             new LightningNodeViewModel
             {
-                ConnectionString = $"type=charge;server={tester.MerchantCharge.Client.Uri.AbsoluteUri};allowinsecure=true"
+                ConnectionString = $"type=clightning;server={address}"
             }, "save", "BTC"));
 
         // Make sure old connection string format does not work
         Assert.IsType<RedirectToActionResult>(await storeController.SetupLightningNode(user.StoreId,
-            new LightningNodeViewModel { ConnectionString = tester.MerchantCharge.Client.Uri.AbsoluteUri },
+            new LightningNodeViewModel { ConnectionString = address },
             "save", "BTC"));
 
         storeResponse = storeController.LightningSettings(user.StoreId, "BTC");
@@ -838,7 +838,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
     public async Task CanDoLightningInternalNodeMigration()
     {
         using var tester = CreateServerTester(newDb: true);
-        tester.ActivateLightning(LightningConnectionType.CLightning);
+        tester.ActivateLightning(LightningTestImplementation.CoreLightning);
         await tester.StartAsync();
         var acc = tester.NewAccount();
         await acc.GrantAccessAsync(true);
@@ -865,7 +865,7 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         Assert.Equal(derivation, v.AccountOriginal);
         Assert.Equal(xpub, v.GetFirstAccountKeySettings().AccountKey.ToString());
 
-        await acc.RegisterLightningNodeAsync("BTC", LightningConnectionType.CLightning);
+        await acc.RegisterLightningNodeAsync("BTC", LightningTestImplementation.CoreLightning);
         store = await tester.PayTester.StoreRepository.FindStore(acc.StoreId);
 
         pmi = PaymentTypes.LN.GetPaymentMethodId("BTC");
@@ -891,35 +891,6 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         Assert.Null(conf["CryptoCode"]); // Osolete
         Assert.Null(conf["connectionString"]); // Null, so should be stripped
         Assert.Null(conf["DisableBOLT11PaymentOption"]); // Old garbage cleaned
-
-        // Test if legacy lightning charge settings are converted to LightningConnectionString
-        store.DerivationStrategies = new JObject()
-        {
-            new JProperty("BTC_LightningLike", new JObject()
-            {
-                new JProperty("LightningChargeUrl", "http://mycharge.com/"),
-                new JProperty("Username", "usr"),
-                new JProperty("Password", "pass"),
-                new JProperty("CryptoCode", "BTC"),
-                new JProperty("PaymentId", "someshit"),
-            })
-        }.ToString();
-        await tester.PayTester.StoreRepository.UpdateStore(store);
-        await tester.RestartMigration();
-        store = await tester.PayTester.StoreRepository.FindStore(acc.StoreId);
-        Assert.NotNull(store);
-        lnMethod = store.GetPaymentMethodConfig<LightningPaymentMethodConfig>(pmi, handlers);
-        Assert.NotNull(lnMethod?.GetExternalLightningUrl());
-
-        var url = lnMethod.GetExternalLightningUrl();
-        LightningConnectionStringHelper.ExtractValues(url, out var connType);
-        Assert.Equal(LightningConnectionType.Charge, connType);
-        var client = Assert.IsType<ChargeClient>(tester.PayTester.GetService<LightningClientFactoryService>()
-            .Create(url, tester.NetworkProvider.GetNetwork<BTCPayNetwork>("BTC")));
-        var auth = Assert.IsType<ChargeAuthentication.UserPasswordAuthentication>(client.ChargeAuthentication);
-
-        Assert.Equal("pass", auth.NetworkCredential.Password);
-        Assert.Equal("usr", auth.NetworkCredential.UserName);
 
         // Test if lightning connection strings get migrated to internal
         store.DerivationStrategies = new JObject()
@@ -954,5 +925,106 @@ public class LightningTests(ITestOutputHelper testOutputHelper) : UnitTestBase(t
         Assert.True(conf["lud12Enabled"]?.Value<bool>());
         Assert.Null(conf["useBech32Scheme"]); // default stripped
 #pragma warning restore CS0618 // Type or member is obsolete
+    }
+
+    [Fact(Timeout = 60 * 20 * 1000)]
+    [Trait("Integration", "Integration")]
+    [Trait("Lightning", "Lightning")]
+    public async Task CanUseLUD21VerifyEndpoint()
+    {
+        using var tester = CreateServerTester();
+        tester.ActivateLightning();
+        await tester.StartAsync();
+        await tester.EnsureChannelsSetup();
+        var user = tester.NewAccount();
+        await user.GrantAccessAsync(true);
+        var client = await user.CreateClient(Policies.Unrestricted);
+
+        // Enable LNURL and Lightning
+        var methods = await client.GetStorePaymentMethods(user.StoreId);
+        await user.RegisterLightningNodeAsync("BTC", false);
+
+        // Set up a Lightning Address
+        var username = Guid.NewGuid().ToString("n").Substring(0, 8);
+        await client.AddOrUpdateStoreLightningAddress(user.StoreId, username,
+            new LightningAddressData());
+
+        // Verify endpoint returns 404 for unknown payment hash
+        var fakeHash = "0000000000000000000000000000000000000000000000000000000000000000";
+        var response = await tester.PayTester.HttpClient.GetAsync(
+            $"/lnurlp/verify/{fakeHash}");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+
+        // Create an invoice via LNURL-pay flow to get a real payment hash.
+        // The Lightning Address resolver lives at /.well-known/lnurlp/{username}
+        // (LUD-16). The bare /lnurlp/{username} path has no route.
+        var lnurlResponse = await tester.PayTester.HttpClient.GetAsync(
+            $"/.well-known/lnurlp/{username}");
+        Assert.Equal(System.Net.HttpStatusCode.OK, lnurlResponse.StatusCode);
+        var lnurlPayRequest = JObject.Parse(await lnurlResponse.Content.ReadAsStringAsync());
+        var callback = lnurlPayRequest["callback"]?.ToString();
+        Assert.NotNull(callback);
+
+        // Make the callback with minimum amount to create a Lightning invoice
+        var minSendable = lnurlPayRequest["minSendable"]?.Value<long>() ?? 1000;
+        var callbackUri = new Uri(callback);
+        var callbackPath = callbackUri.PathAndQuery;
+        var separator = callbackPath.Contains('?') ? "&" : "?";
+        var callbackResponse = await tester.PayTester.HttpClient.GetAsync(
+            $"{callbackPath}{separator}amount={minSendable}");
+        Assert.Equal(System.Net.HttpStatusCode.OK, callbackResponse.StatusCode);
+        var callbackResult = JObject.Parse(await callbackResponse.Content.ReadAsStringAsync());
+
+        // Check if verify URL is present in callback response
+        var verifyUrl = callbackResult["verify"]?.ToString();
+        Assert.NotNull(verifyUrl);
+
+        // Extract payment hash from verify URL
+        var verifyUri = new Uri(verifyUrl);
+        var verifyPath = verifyUri.PathAndQuery;
+
+        // Call verify endpoint - invoice should exist but not be settled yet
+        var verifyResponse = await tester.PayTester.HttpClient.GetAsync(verifyPath);
+        Assert.Equal(System.Net.HttpStatusCode.OK, verifyResponse.StatusCode);
+        var verifyResult = JObject.Parse(await verifyResponse.Content.ReadAsStringAsync());
+        Assert.Equal("OK", verifyResult["status"]?.ToString());
+        Assert.False(verifyResult["settled"]?.Value<bool>());
+        var preimageToken = verifyResult["preimage"];
+        Assert.True(preimageToken is null || preimageToken.Type == JTokenType.Null,
+            "Expected preimage to be null or absent for an unsettled invoice");
+        Assert.NotNull(verifyResult["pr"]?.ToString());
+
+        // Repeat the callback with the SAME amount. Exercises the idempotent flush
+        // branch in UpdatePrompt(trackedDestinations): the AddressInvoices row for
+        // the payment hash already exists, so the flush loop should take the
+        // "existing is not null" path without throwing or duplicating rows, and
+        // the verify endpoint should still resolve the hash afterward.
+        var callbackResponse2 = await tester.PayTester.HttpClient.GetAsync(
+            $"{callbackPath}{separator}amount={minSendable}");
+        Assert.Equal(System.Net.HttpStatusCode.OK, callbackResponse2.StatusCode);
+        var verifyResponse2 = await tester.PayTester.HttpClient.GetAsync(verifyPath);
+        Assert.Equal(System.Net.HttpStatusCode.OK, verifyResponse2.StatusCode);
+
+        // Repeat the callback with a DIFFERENT amount. UpdatePrompt should persist
+        // the new prompt blob AND index the new payment hash in AddressInvoices so
+        // the new verify URL resolves.
+        var newAmount = minSendable * 2;
+        var callbackResponse3 = await tester.PayTester.HttpClient.GetAsync(
+            $"{callbackPath}{separator}amount={newAmount}");
+        Assert.Equal(System.Net.HttpStatusCode.OK, callbackResponse3.StatusCode);
+        var callbackResult3 = JObject.Parse(await callbackResponse3.Content.ReadAsStringAsync());
+        var verifyUrl3 = callbackResult3["verify"]?.ToString();
+        Assert.NotNull(verifyUrl3);
+        var verifyPath3 = new Uri(verifyUrl3).PathAndQuery;
+        var verifyResponse3 = await tester.PayTester.HttpClient.GetAsync(verifyPath3);
+        Assert.Equal(System.Net.HttpStatusCode.OK, verifyResponse3.StatusCode);
+
+        // Malformed paymentHash (non-hex / wrong length) must be rejected at the
+        // 64-hex guard before any DB lookup, returning Reason "Not found".
+        var malformedResponse = await tester.PayTester.HttpClient.GetAsync(
+            $"/lnurlp/verify/not-a-hex-hash");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, malformedResponse.StatusCode);
+        var malformedBody = JObject.Parse(await malformedResponse.Content.ReadAsStringAsync());
+        Assert.Equal("Not found", malformedBody["reason"]?.ToString());
     }
 }

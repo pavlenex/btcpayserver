@@ -18,7 +18,7 @@ namespace BTCPayServer.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.1")
+                .HasAnnotation("ProductVersion", "10.0.6")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -76,6 +76,28 @@ namespace BTCPayServer.Migrations
                     b.ToTable("AddressInvoices");
                 });
 
+            modelBuilder.Entity("BTCPayServer.Data.ApiKeyPermissionUsage", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ApiKey")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("LastUsed")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Permission")
+                        .HasColumnType("text");
+
+                    b.Property<int>("UsageCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ApiKeyPermissionUsages");
+                });
+
             modelBuilder.Entity("BTCPayServer.Data.AppData", b =>
                 {
                     b.Property<string>("Id")
@@ -120,11 +142,17 @@ namespace BTCPayServer.Migrations
                     b.Property<bool>("Approved")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("AuthenticatorEnabled")
+                        .HasColumnType("boolean");
+
                     b.Property<byte[]>("Blob")
                         .HasColumnType("bytea");
 
                     b.Property<string>("Blob2")
                         .HasColumnType("JSONB");
+
+                    b.Property<bool>("BypassMonetization")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
@@ -358,6 +386,9 @@ namespace BTCPayServer.Migrations
 
                     b.Property<string>("Blob2")
                         .HasColumnType("JSONB");
+
+                    b.Property<DateTimeOffset?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Name")
                         .HasColumnType("text");
@@ -820,6 +851,9 @@ namespace BTCPayServer.Migrations
                     b.PrimitiveCollection<string[]>("OutpointsUsed")
                         .HasColumnType("text[]");
 
+                    b.Property<string>("NoSignatureTransactionId")
+                        .HasColumnType("text");
+
                     b.Property<int>("State")
                         .HasColumnType("integer");
 
@@ -829,11 +863,17 @@ namespace BTCPayServer.Migrations
                     b.Property<string>("TransactionId")
                         .HasColumnType("text");
 
+                    b.Property<uint>("XMin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("Id");
 
                     b.HasIndex("StoreId");
 
-                    b.HasIndex("TransactionId");
+                    b.HasIndex("NoSignatureTransactionId");
 
                     b.ToTable("PendingTransactions");
                 });
@@ -1189,6 +1229,13 @@ namespace BTCPayServer.Migrations
                     b.Property<string>("PlanChangeId")
                         .HasColumnType("text")
                         .HasColumnName("plan_change_id");
+
+                    b.Property<string>("Timing")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Immediate")
+                        .HasColumnName("timing");
 
                     b.Property<string>("Type")
                         .IsRequired()

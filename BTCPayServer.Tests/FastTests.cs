@@ -11,23 +11,22 @@ using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
+using BTCPayServer.Controllers;
+using BTCPayServer.Plugins;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Configuration;
-using BTCPayServer.Controllers;
 using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Hosting;
 using BTCPayServer.JsonConverters;
 using BTCPayServer.Payments;
-using BTCPayServer.Plugins.Emails.Views;
 using BTCPayServer.Rating;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Services.Fees;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Rates;
-using BTCPayServer.Services.Stores;
 using BTCPayServer.Services.Wallets;
 using BTCPayServer.Validation;
 using Microsoft.Extensions.Configuration;
@@ -37,14 +36,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NBitcoin;
 using NBitcoin.RPC;
-using NBitcoin.Scripting.Parser;
 using NBitcoin.WalletPolicies;
 using NBXplorer.DerivationStrategy;
 using NBXplorer.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace BTCPayServer.Tests
 {
@@ -1431,30 +1428,6 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
         }
 
         [Fact]
-        public void CanUsePermission()
-        {
-            Assert.True(Permission.Create(Policies.CanModifyServerSettings)
-                .Contains(Permission.Create(Policies.CanModifyServerSettings)));
-            Assert.True(Permission.Create(Policies.CanModifyProfile)
-                .Contains(Permission.Create(Policies.CanViewProfile)));
-            Assert.True(Permission.Create(Policies.CanModifyStoreSettings)
-                .Contains(Permission.Create(Policies.CanViewStoreSettings)));
-            Assert.False(Permission.Create(Policies.CanViewStoreSettings)
-                .Contains(Permission.Create(Policies.CanModifyStoreSettings)));
-            Assert.False(Permission.Create(Policies.CanModifyServerSettings)
-                .Contains(Permission.Create(Policies.CanModifyStoreSettings)));
-            Assert.True(Permission.Create(Policies.Unrestricted)
-                .Contains(Permission.Create(Policies.CanModifyStoreSettings)));
-            Assert.True(Permission.Create(Policies.Unrestricted)
-                .Contains(Permission.Create(Policies.CanModifyStoreSettings, "abc")));
-
-            Assert.True(Permission.Create(Policies.CanViewStoreSettings)
-                .Contains(Permission.Create(Policies.CanViewStoreSettings, "abcd")));
-            Assert.False(Permission.Create(Policies.CanModifyStoreSettings, "abcd")
-                .Contains(Permission.Create(Policies.CanModifyStoreSettings)));
-        }
-
-        [Fact]
         public void CanParseFilter()
         {
             var storeId = "6DehZnc9S7qC6TUTNWuzJ1pFsHTHvES6An21r3MjvLey";
@@ -1481,8 +1454,18 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             Assert.Equal("hekki", search.TextSearch);
             Assert.Equal("orderid:MYORDERID,orderid:MYORDERID_2", search.TextFilters);
             Assert.Equal("orderid:MYORDERID,orderid:MYORDERID_2,hekki", search.TextCombined);
-            Assert.Equal("StartDate:2019-04-25 01:00 AM", search.WithoutSearchText());
+            Assert.Equal("startdate:2019-04-25 01:00 AM", search.WithoutSearchText());
             Assert.Equal(filter, search.ToString());
+
+            filter = "label:test,nolabel:true,direction:in, hekki";
+            search = new SearchString(filter);
+            Assert.Equal("hekki", search.TextSearch);
+            Assert.Null(search.TextFilters);
+            Assert.Equal("hekki", search.TextCombined);
+            Assert.Equal("label:test,nolabel:true,direction:in", search.WithoutSearchText());
+            Assert.Single(search.Filters["label"], "test");
+            Assert.Single(search.Filters["direction"], "in");
+            Assert.True(search.GetFilterBool("nolabel"));
 
             // modify search
             filter = $"status:settled,exceptionstatus:paidLate,unusual:true, fulltext searchterm, storeid:{storeId},startdate:2019-04-25 01:00:00";
@@ -1525,6 +1508,64 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             Assert.Single(modified.GetFilterArray("enddate"), "-7d");
             modified = new SearchString(modified.Toggle("enddate", "-7d"));
             Assert.Null(modified.GetFilterArray("enddate"));
+
+            search = new SearchString("7,startdate:-7d");
+            Assert.Equal("startdate:-7d", search.WithoutSearchText());
+        }
+
+        [Fact]
+        public void BuildWalletTransactionsFilterSeparatesTextAndStructuredTerms()
+        {
+            var result = UIWalletsController.BuildWalletTransactionsFilter(
+                "direction:out,label:primary-label,nolabel:true,startdate:2026-03-01T12:34:56",
+                "abc123tx",
+                "secondary-label",
+                120);
+
+            Assert.Equal("abc123tx", result.SearchInputText);
+            Assert.Equal("abc123tx", result.SearchText);
+            Assert.Equal("abc123tx", result.TextSearch);
+
+            var structuredSearchTerm = result.SearchTerm;
+            Assert.Contains("direction:out", structuredSearchTerm);
+            Assert.Contains("label:primary-label", structuredSearchTerm);
+            Assert.Contains("nolabel:true", structuredSearchTerm);
+            Assert.Contains("startdate:2026-03-01T12:34:56", structuredSearchTerm);
+            Assert.DoesNotContain("abc123tx", structuredSearchTerm);
+
+            Assert.Equal(["primary-label", "secondary-label"], result.LabelFilters);
+            Assert.True(result.IncludeNoLabel);
+            Assert.False(result.Positive);
+            Assert.NotNull(result.StartDate);
+            Assert.True(result.HasLabelFilter);
+            Assert.True(result.HasFilters);
+
+            result = UIWalletsController.BuildWalletTransactionsFilter(null, "abc", null, 120);
+
+            Assert.Equal(string.Empty, result.SearchTerm);
+            Assert.Equal("abc", result.SearchText);
+            Assert.Equal("abc", result.SearchInputText);
+            Assert.Equal("abc", result.TextSearch);
+            Assert.False(result.HasLabelFilter);
+            Assert.True(result.HasFilters);
+
+            result = UIWalletsController.BuildWalletTransactionsFilter("foo:bar", null, null, 120);
+
+            Assert.Equal(string.Empty, result.SearchTerm);
+            Assert.Equal(string.Empty, result.SearchText);
+            Assert.Equal(string.Empty, result.SearchInputText);
+            Assert.Equal(string.Empty, result.TextSearch);
+            Assert.False(result.HasLabelFilter);
+            Assert.False(result.HasFilters);
+
+            result = UIWalletsController.BuildWalletTransactionsFilter(string.Empty, null, null, 120);
+
+            Assert.Equal(string.Empty, result.SearchTerm);
+            Assert.Equal(string.Empty, result.SearchText);
+            Assert.Equal(string.Empty, result.SearchInputText);
+            Assert.Equal(string.Empty, result.TextSearch);
+            Assert.False(result.HasLabelFilter);
+            Assert.False(result.HasFilters);
         }
 
         [Fact]
@@ -2218,9 +2259,8 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             //a master fingerprint must always be present if youre providing rooted path
             Assert.ThrowsAny<FormatException>(() => mainnetParser.ParseOD("pkh([44'/0'/0']xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/1/*)"));
 
-
             parsedDescriptor = mainnetParser.ParseOD(
-                "pkh(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/0/*)");
+                "pkh([d34db33f]xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/<0;1>/*)");
             Assert.Equal("xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL-[legacy]", parsedDescriptor.AccountDerivation.ToString());
 
             //but a different deriv path from standard (0/*) is not supported
@@ -2341,20 +2381,6 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             // LTC might should be over paid due to BTC paying above what it should (round 1 satoshi up), but we handle this case
             // and set DueUncapped to zero.
             Assert.Equal(0.0m, accounting.DueUncapped);
-        }
-
-        [Fact]
-        public void AllPoliciesShowInUI()
-        {
-            new BitpayRateProvider(new System.Net.Http.HttpClient()).GetRatesAsync(default).GetAwaiter().GetResult();
-            foreach (var policy in Policies.AllPolicies)
-            {
-                Assert.True(UIManageController.AddApiKeyViewModel.PermissionValueItem.PermissionDescriptions.ContainsKey(policy));
-                if (Policies.IsStorePolicy(policy))
-                {
-                    Assert.True(UIManageController.AddApiKeyViewModel.PermissionValueItem.PermissionDescriptions.ContainsKey($"{policy}:"));
-                }
-            }
         }
 
         [Fact]
@@ -2558,6 +2584,115 @@ bc1qfzu57kgu5jthl934f9xrdzzx8mmemx7gn07tf0grnvz504j6kzusu2v0ku
             reader.Read();
             Assert.Equal("BTC-hasjdfhasjkfjlajn", new PaymentMethodIdJsonConverter().ReadJson(reader, typeof(PaymentMethodId), null,
                 JsonSerializer.CreateDefault()).ToString());
+        }
+
+        [Fact]
+        public void GetDisabledPluginUpdates_ReturnsUpdateWhenNewerVersionAvailable()
+        {
+            var disabled = new Dictionary<string, Version> { { "TestPlugin", new Version(1, 0, 0, 0) } };
+            var available = new Dictionary<string, PluginService.AvailablePlugin>()
+            {
+                { "TestPlugin", MakeAvailablePlugin("TestPlugin", "1.1.0") }
+            };
+
+            var result = UIServerController.ListPluginsViewModel.GetDisabledPluginUpdates(disabled, available);
+
+            Assert.Single(result);
+            Assert.Equal(new Version(1, 1, 0), result["TestPlugin"].Version);
+        }
+
+        [Fact]
+        public void GetDisabledPluginUpdates_NoUpdateWhenSameVersion()
+        {
+            var disabled = new Dictionary<string, Version> { { "TestPlugin", new Version(1, 0, 0, 0) } };
+            var available = new Dictionary<string, PluginService.AvailablePlugin>()
+            {
+                { "TestPlugin", MakeAvailablePlugin("TestPlugin", "1.0.0") }
+            };
+
+            var result = UIServerController.ListPluginsViewModel.GetDisabledPluginUpdates(disabled, available);
+
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public void GetDisabledPluginUpdates_NoUpdateWhenNoAvailablePlugins()
+        {
+            var disabled = new Dictionary<string, Version> { { "TestPlugin", new Version(1, 0, 0, 0) } };
+            var available = new Dictionary<string, PluginService.AvailablePlugin>();
+
+            var result = UIServerController.ListPluginsViewModel.GetDisabledPluginUpdates(disabled, available);
+
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public void GetDisabledPluginUpdates_SkipsNullVersion()
+        {
+            var disabled = new Dictionary<string, Version> { { "TestPlugin", null } };
+            var available = new Dictionary<string, PluginService.AvailablePlugin>()
+            {
+                { "TestPlugin", MakeAvailablePlugin("TestPlugin", "1.1.0") }
+            };
+
+            var result = UIServerController.ListPluginsViewModel.GetDisabledPluginUpdates(disabled, available);
+
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public void GetDisabledPluginUpdates_CaseInsensitiveIdentifierMatching()
+        {
+            var disabled = new Dictionary<string, Version> { { "MyPlugin", new Version(1, 0, 0, 0) } };
+            var available = new Dictionary<string, PluginService.AvailablePlugin>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "myplugin", MakeAvailablePlugin("myplugin", "1.1.0") }
+            };
+
+            var result = UIServerController.ListPluginsViewModel.GetDisabledPluginUpdates(disabled, available);
+
+            Assert.Single(result);
+            Assert.Equal(new Version(1, 1, 0), result["MyPlugin"].Version);
+        }
+
+        [Fact]
+        public void GetDisabledPluginUpdates_UsesNewestVersionFromMultipleEntries()
+        {
+            var disabled = new Dictionary<string, Version> { { "TestPlugin", new Version(1, 0, 0, 0) } };
+            // Build the dictionary the same way the controller does
+            var allPlugins = new[]
+            {
+                MakeAvailablePlugin("TestPlugin", "1.1.0"),
+                MakeAvailablePlugin("TestPlugin", "1.3.0"),
+                MakeAvailablePlugin("TestPlugin", "1.2.0")
+            };
+            var available = new Dictionary<string, PluginService.AvailablePlugin>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in allPlugins)
+            {
+                if (!available.TryGetValue(p.Identifier, out var existing) || p.Version > existing.Version)
+                    available[p.Identifier] = p;
+            }
+
+            var result = UIServerController.ListPluginsViewModel.GetDisabledPluginUpdates(disabled, available);
+
+            Assert.Single(result);
+            Assert.Equal(new Version(1, 3, 0), result["TestPlugin"].Version);
+        }
+
+        private static PluginService.AvailablePlugin MakeAvailablePlugin(
+            string identifier, string version, params (string id, string condition)[] dependencies)
+        {
+            return new PluginService.AvailablePlugin
+            {
+                Identifier = identifier,
+                Name = identifier,
+                Version = Version.Parse(version),
+                Dependencies = dependencies.Select(d => new IBTCPayServerPlugin.PluginDependency
+                {
+                    Identifier = d.id,
+                    Condition = d.condition
+                }).ToArray()
+            };
         }
     }
 }

@@ -6,23 +6,17 @@ using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
-using BTCPayServer.Client;
 using BTCPayServer.Common;
 using BTCPayServer.Configuration;
 using BTCPayServer.Controllers;
-using BTCPayServer.Controllers.Greenfield;
 using BTCPayServer.Data;
 using BTCPayServer.Data.Payouts.LightningLike;
-using BTCPayServer.Forms;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Lightning;
-using BTCPayServer.Lightning.Charge;
 using BTCPayServer.Lightning.CLightning;
 using BTCPayServer.Lightning.Eclair;
 using BTCPayServer.Lightning.Phoenixd;
-using BTCPayServer.Lightning.LNbank;
 using BTCPayServer.Lightning.LND;
-using BTCPayServer.Lightning.LNDhub;
 using BTCPayServer.Logging;
 using BTCPayServer.PaymentRequest;
 using BTCPayServer.Payments;
@@ -34,7 +28,6 @@ using BTCPayServer.Plugins;
 using BTCPayServer.Rating;
 using BTCPayServer.Rating.Providers;
 using BTCPayServer.Security;
-using BTCPayServer.Security.Bitpay;
 using BTCPayServer.Security.Greenfield;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
@@ -64,19 +57,19 @@ using NBitcoin;
 using NBitpayClient;
 using NBXplorer.DerivationStrategy;
 using Newtonsoft.Json;
-using Serilog;
 using BTCPayServer.Services.Reporting;
 using BTCPayServer.Services.WalletFileParsing;
 using BTCPayServer.Payments.LNURLPay;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
+using BTCPayServer.Client;
 using BTCPayServer.Payouts;
+using BTCPayServer.Plugins.Bitcoin;
 using ExchangeSharp;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.Extensions.Localization;
-using Microsoft.AspNetCore.Mvc.Localization;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 
@@ -137,8 +130,6 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<ISwaggerProvider, DefaultSwaggerProvider>();
             services.TryAddSingleton<SocketFactory>();
 
-            services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
-                new ChargeLightningConnectionStringHandler(client));
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(_ =>
                 new CLightningConnectionStringHandler());
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
@@ -147,10 +138,6 @@ namespace BTCPayServer.Hosting
                 new PhoenixdConnectionStringHandler(client));
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
                 new LndConnectionStringHandler(client));
-            services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
-                new LndHubConnectionStringHandler(client));
-            services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
-                new LNbankConnectionStringHandler(client));
             services.TryAddSingleton<LightningClientFactoryService>();
             services.AddHttpClient(LightningClientFactoryService.OnionNamedClient)
                 .ConfigurePrimaryHttpMessageHandler<Socks5HttpClientHandler>();
@@ -168,6 +155,7 @@ namespace BTCPayServer.Hosting
             services.AddSettingsAccessor<ThemeSettings>();
             services.AddSettingsAccessor<ServerSettings>();
             //
+            services.AddSingleton<PermissionService>();
 
             AddOnchainWalletParsers(services);
 
@@ -177,7 +165,6 @@ namespace BTCPayServer.Hosting
             services.TryAddSingleton<InvoiceRepository>();
             services.AddSingleton<PaymentService>();
             services.AddSingleton<BTCPayServerEnvironment>();
-            services.TryAddSingleton<TokenRepository>();
             services.TryAddSingleton<WalletRepository>();
             services.TryAddSingleton<EventAggregator>();
             services.TryAddSingleton<PaymentRequestService>();
@@ -393,6 +380,7 @@ namespace BTCPayServer.Hosting
             services.AddScheduledTask<GithubVersionFetcher>(TimeSpan.FromDays(1));
             services.AddScheduledTask<PluginUpdateFetcher>(TimeSpan.FromDays(1));
 
+            services.AddSearchResultItemProvider<ReportingSearchResultProvider>();
             services.AddReportProvider<PaymentsReportProvider>();
             services.AddReportProvider<OnChainWalletReportProvider>();
             services.AddReportProvider<ProductsReportProvider>();
@@ -432,7 +420,6 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<DefaultRulesCollection>();
             services.AddSingleton<IHostedService, NBXplorerWaiters>();
             services.AddSingleton<IHostedService, InvoiceEventSaverService>();
-            services.AddSingleton<IHostedService, BitpayIPNSender>();
             services.AddSingleton<IHostedService, InvoiceWatcher>();
             services.AddScheduledDbScript("Invoice Cleanup",
                 """
@@ -450,6 +437,12 @@ namespace BTCPayServer.Hosting
                 )
                 SELECT COUNT(*) FROM deleted_invoices;
                 """);
+            services.AddMigration("20260402_idx_invoices_expired_cleanup",
+                                  """
+                                  CREATE INDEX IF NOT EXISTS idx_invoices_expired_cleanup
+                                  ON "Invoices" ("Created", "Id")
+                                  WHERE "Status" = 'Expired' AND "ExceptionStatus" = '';
+                                  """);
 
             services.AddSingleton<RatesHostedService>();
             services.AddSingleton<IHostedService>(s => s.GetRequiredService<RatesHostedService>());
@@ -459,12 +452,9 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<IHostedService, AppInventoryUpdaterHostedService>();
             services.AddSingleton<IHostedService, TransactionLabelMarkerHostedService>();
             services.AddSingleton<IHostedService, OnChainRateTrackerHostedService>();
-            services.AddSingleton<IHostedService, DynamicDnsHostedService>();
             services.AddSingleton<PaymentRequestStreamer>();
             services.AddSingleton<IHostedService>(s => s.GetRequiredService<PaymentRequestStreamer>());
             services.AddSingleton<IBackgroundJobClient, BackgroundJobClient>();
-            services.AddScoped<IAuthorizationHandler, CookieAuthorizationHandler>();
-            services.AddScoped<IAuthorizationHandler, BitpayAuthorizationHandler>();
 
             services.AddSingleton<INotificationHandler, NewVersionNotification.Handler>();
             services.AddSingleton<INotificationHandler, NewUserRequiresApprovalNotification.Handler>();
@@ -477,19 +467,12 @@ namespace BTCPayServer.Hosting
             services.TryAddSingleton<ExplorerClientProvider>();
             services.AddSingleton<IExplorerClientProvider, ExplorerClientProvider>(x =>
                 x.GetRequiredService<ExplorerClientProvider>());
-            services.TryAddSingleton<Bitpay>(o =>
-            {
-                if (o.GetRequiredService<BTCPayServerOptions>().NetworkType == ChainName.Mainnet)
-                    return new Bitpay(new Key(), new Uri("https://bitpay.com/"));
-                else
-                    return new Bitpay(new Key(), new Uri("https://test.bitpay.com/"));
-            });
+
             RegisterRateSources(services);
             services.TryAddSingleton<RateProviderFactory>();
             services.TryAddSingleton<RateFetcher>();
 
             services.TryAddScoped<IHttpContextAccessor, HttpContextAccessor>();
-            services.AddTransient<BitpayAccessTokenController>();
             services.AddTransient<UIInvoiceController>();
             services.AddTransient<UIPaymentRequestController>();
             services.AddSingleton<LabelService>();
@@ -498,12 +481,30 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<InvoiceActivator>();
 
             services.AddPayoutProcesors();
-            services.AddForms();
 
-            services.AddAPIKeyAuthentication();
+            services.AddSingleton<APIKeyRepository>();
+            services.AddSingleton<IPermissionHandler, BuiltInPermissionHandler>();
+            services.AddSingleton<IPermissionScopeProvider, BuiltInPermissionScopeProvider>();
+            services.AddSingleton<BuiltInPermissionScopeProvider.IStoreScopeProvider, BuiltInPermissionScopeProvider.SqlStoreScopeProvider>();
+
+            foreach (var routeDataToStoreId in new BuiltInPermissionScopeProvider.RouteValueToStoreIdQuery[]
+                     {
+                         new("appId", "SELECT \"StoreDataId\" FROM \"Apps\" WHERE \"Id\" = @id"),
+                         new("payReqId", "SELECT \"StoreDataId\" FROM \"PaymentRequests\" WHERE \"Id\" = @id"),
+                         new("paymentRequestId", "SELECT \"StoreDataId\" FROM \"PaymentRequests\" WHERE \"Id\" = @id"),
+                         new("pullPaymentId", "SELECT \"StoreId\" FROM \"PullPayments\" WHERE \"Id\" = @id"),
+                         new("invoiceId", "SELECT \"StoreDataId\" FROM \"Invoices\" WHERE \"Id\" = @id"),
+                     })
+
+                services.AddSingleton(routeDataToStoreId);
+
+            services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+            services.AddTransient<IClaimsTransformation, CookieAuthenticationClaimTransformer>();
+
             services.AddBtcPayServerAuthenticationSchemes();
 
-            services.AddAuthorization(o => o.AddBTCPayPolicies());
+            services.AddAuthorization();
+            services.AddSingleton<IConfigureOptions<AuthorizationOptions>, PermissionAuthorizationOptionsSetup>();
 
             services.AddCors(options =>
             {
@@ -520,6 +521,154 @@ namespace BTCPayServer.Hosting
                 services.AddSingleton<Cheater>();
                 services.AddSingleton<IHostedService, Cheater>(o => o.GetRequiredService<Cheater>());
             }
+
+               services.AddPolicyDefinitions(new[]
+            {
+                new PolicyDefinition(
+                    Policies.CanViewInvoices,
+                    new PermissionDisplay("View invoices", "Allows viewing invoices."),
+                    new PermissionDisplay("View invoices", "Allows viewing invoices on the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanCreateInvoice,
+                    new PermissionDisplay("Create an invoice", "Allows creating new invoices."),
+                    new PermissionDisplay("Create an invoice", "Allows creating new invoices on the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanModifyInvoices,
+                    new PermissionDisplay("Modify invoices", "Allows viewing and modifying invoices."),
+                    new PermissionDisplay("Modify invoices", "Allows viewing and modifying invoices on the selected stores."),
+                    new[] { Policies.CanViewInvoices, Policies.CanCreateInvoice, Policies.CanCreateLightningInvoiceInStore }),
+                new PolicyDefinition(
+                    Policies.CanModifyWebhooks,
+                    new PermissionDisplay("Modify stores webhooks", "Allows modifying the webhooks of all your stores."),
+                    new PermissionDisplay("Modify selected stores' webhooks", "Allows modifying the webhooks of the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanSendStoreEmail,
+                    new PermissionDisplay("Send store emails", "Allows sending emails on behalf of all your stores."),
+                    new PermissionDisplay("Send selected stores' emails", "Allows sending emails on behalf of the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanModifyServerSettings,
+                    new PermissionDisplay("Manage your server", "Grants total control on the server settings of your server."),
+                    includedPermissions: new[] { Policies.CanUseInternalLightningNode, Policies.CanManageUsers }),
+                new PolicyDefinition(
+                    Policies.CanModifyStoreSettings,
+                    new PermissionDisplay("Modify your stores", "Allows managing invoices on all your stores and modify their settings."),
+                    new PermissionDisplay("Manage selected stores", "Allows managing invoices on the selected stores and modify their settings."),
+                    new[]
+                    {
+                        Policies.CanManagePullPayments,
+                        Policies.CanModifyInvoices,
+                        Policies.CanViewStoreSettings,
+                        Policies.CanModifyWebhooks,
+                        Policies.CanModifyPaymentRequests,
+                        Policies.CanManagePayouts,
+                        Policies.CanUseLightningNodeInStore,
+                        Policies.CanSendStoreEmail
+                    }),
+                new PolicyDefinition(
+                    Policies.CanViewStoreSettings,
+                    new PermissionDisplay("View your stores", "Allows viewing stores settings."),
+                    new PermissionDisplay("View your stores", "Allows viewing the selected stores' settings."),
+                    new[] { Policies.CanViewInvoices, Policies.CanViewPaymentRequests, Policies.CanViewReports, Policies.CanViewPullPayments, Policies.CanViewPayouts }),
+                new PolicyDefinition(
+                    Policies.CanViewReports,
+                    new PermissionDisplay("View your reports", "Allows viewing reports."),
+                    new PermissionDisplay("View your selected stores' reports", "Allows viewing the selected stores' reports.")),
+                new PolicyDefinition(
+                    Policies.CanViewPaymentRequests,
+                    new PermissionDisplay("View your payment requests", "Allows viewing payment requests."),
+                    new PermissionDisplay("View your payment requests", "Allows viewing the selected stores' payment requests.")),
+                new PolicyDefinition(
+                    Policies.CanModifyPaymentRequests,
+                    new PermissionDisplay("Modify your payment requests", "Allows viewing, modifying, deleting and creating new payment requests on all your stores."),
+                    new PermissionDisplay("Manage selected stores' payment requests", "Allows viewing, modifying, deleting and creating new payment requests on the selected stores."),
+                    new[] { Policies.CanViewPaymentRequests }),
+                new PolicyDefinition(
+                    Policies.CanModifyProfile,
+                    new PermissionDisplay("Manage your profile", "Allows viewing and modifying your user profile."),
+                    includedPermissions: new[] { Policies.CanViewProfile }),
+                new PolicyDefinition(
+                    Policies.CanViewProfile,
+                    new PermissionDisplay("View your profile", "Allows viewing your user profile.")),
+                new PolicyDefinition(
+                    Policies.CanViewUsers,
+                    new PermissionDisplay("View users", "Allows seeing all users on this server.")),
+                new PolicyDefinition(
+                    Policies.CanCreateUser,
+                    new PermissionDisplay("Create new users", "Allows creating new users on this server.")),
+                new PolicyDefinition(
+                    Policies.CanDeleteUser,
+                    new PermissionDisplay("Delete user", "Allows deleting the user to whom it is assigned. Admin users can delete any user without this permission.")),
+                new PolicyDefinition(
+                    Policies.CanManageNotificationsForUser,
+                    new PermissionDisplay("Manage your notifications", "Allows viewing and modifying your user notifications."),
+                    includedPermissions: new[] { Policies.CanViewNotificationsForUser }),
+                new PolicyDefinition(
+                    Policies.CanViewNotificationsForUser,
+                    new PermissionDisplay("View your notifications", "Allows viewing your user notifications.")),
+                new PolicyDefinition(
+                    Policies.Unrestricted,
+                    new PermissionDisplay("Unrestricted access", "Grants unrestricted access to your account.")),
+                new PolicyDefinition(
+                    Policies.CanUseInternalLightningNode,
+                    new PermissionDisplay("Use the internal lightning node", "Allows using the internal BTCPay Server lightning node to create BOLT11 invoices, connect to other nodes, open new channels and pay BOLT11 invoices."),
+                    includedPermissions: new[] { Policies.CanCreateLightningInvoiceInternalNode, Policies.CanViewLightningInvoiceInternalNode }),
+                new PolicyDefinition(
+                    Policies.CanViewLightningInvoiceInternalNode,
+                    new PermissionDisplay("View invoices from internal lightning node", "Allows using the internal BTCPay Server lightning node to view BOLT11 invoices.")),
+                new PolicyDefinition(
+                    Policies.CanCreateLightningInvoiceInternalNode,
+                    new PermissionDisplay("Create invoices with internal lightning node", "Allows using the internal BTCPay Server lightning node to create BOLT11 invoices.")),
+                new PolicyDefinition(
+                    Policies.CanUseLightningNodeInStore,
+                    new PermissionDisplay("Use the lightning nodes associated with your stores", "Allows using the lightning nodes connected to all your stores to create BOLT11 invoices, connect to other nodes, open new channels and pay BOLT11 invoices."),
+                    new PermissionDisplay("Use the lightning nodes associated with your stores", "Allows using the lightning nodes connected to the selected stores to create BOLT11 invoices, connect to other nodes, open new channels and pay BOLT11 invoices."),
+                    new[] { Policies.CanViewLightningInvoiceInStore, Policies.CanCreateLightningInvoiceInStore }),
+                new PolicyDefinition(
+                    Policies.CanViewLightningInvoiceInStore,
+                    new PermissionDisplay("View the lightning invoices associated with your stores", "Allows viewing the lightning invoices connected to all your stores."),
+                    new PermissionDisplay("View the lightning invoices associated with your stores", "Allows viewing the lightning invoices connected to the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanCreateLightningInvoiceInStore,
+                    new PermissionDisplay("Create invoices from the lightning nodes associated with your stores", "Allows using the lightning nodes connected to all your stores to create BOLT11 invoices."),
+                    new PermissionDisplay("Create invoices from the lightning nodes associated with your stores", "Allows using the lightning nodes connected to the selected stores to create BOLT11 invoices."),
+                    new[] { Policies.CanViewLightningInvoiceInStore }),
+                new PolicyDefinition(
+                    Policies.CanManagePullPayments,
+                    new PermissionDisplay("Manage your pull payments", "Allows viewing, modifying, deleting and creating pull payments on all your stores."),
+                    new PermissionDisplay("Manage selected stores' pull payments", "Allows viewing, modifying, deleting and creating pull payments on the selected stores."),
+                    new[] { Policies.CanCreatePullPayments, Policies.CanArchivePullPayments }),
+                new PolicyDefinition(
+                    Policies.CanArchivePullPayments,
+                    new PermissionDisplay("Archive your pull payments", "Allows deleting pull payments on all your stores."),
+                    new PermissionDisplay("Archive selected stores' pull payments", "Allows deleting pull payments on the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanCreatePullPayments,
+                    new PermissionDisplay("Create pull payments", "Allows creating pull payments on all your stores."),
+                    new PermissionDisplay("Create pull payments in selected stores", "Allows creating pull payments on the selected stores."),
+                    new[] { Policies.CanCreateNonApprovedPullPayments }),
+                new PolicyDefinition(
+                    Policies.CanViewPullPayments,
+                    new PermissionDisplay("View your pull payments", "Allows viewing pull payments on all your stores."),
+                    new PermissionDisplay("View selected stores' pull payments", "Allows viewing pull payments on the selected stores.")),
+                new PolicyDefinition(
+                    Policies.CanCreateNonApprovedPullPayments,
+                    new PermissionDisplay("Create non-approved pull payments", "Allows creating pull payments without automatic approval on all your stores."),
+                    new PermissionDisplay("Create non-approved pull payments in selected stores", "Allows viewing, modifying, deleting and creating pull payments without automatic approval on the selected stores."),
+                    new[] { Policies.CanViewPullPayments }),
+                new PolicyDefinition(
+                    Policies.CanManageUsers,
+                    new PermissionDisplay("Manage users", "Allows creating/deleting API keys for users."),
+                    includedPermissions: new[] { Policies.CanCreateUser }),
+                new PolicyDefinition(
+                    Policies.CanManagePayouts,
+                    new PermissionDisplay("Manage payouts", "Allows managing payouts on all your stores."),
+                    new PermissionDisplay("Manage payouts in selected stores", "Allows managing payouts on the selected stores."),
+                    new[] { Policies.CanViewPayouts }),
+                new PolicyDefinition(
+                    Policies.CanViewPayouts,
+                    new PermissionDisplay("View payouts", "Allows viewing payouts on all your stores."),
+                    new PermissionDisplay("View payouts in selected stores", "Allows viewing payouts on the selected stores."))
+            });
 
             return services;
         }
@@ -593,6 +742,7 @@ namespace BTCPayServer.Hosting
             services.AddRateProvider<BudaRateProvider>();
             services.AddRateProvider<BitbankRateProvider>();
             services.AddRateProvider<BitnobRateProvider>();
+            services.AddRateProvider<BitcoinKenyaRateProvider>();
             services.AddRateProvider<BitpayRateProvider>();
             services.AddRateProvider<RipioExchangeProvider>();
             services.AddRateProvider<CryptoMarketExchangeRateProvider>();
@@ -754,33 +904,45 @@ namespace BTCPayServer.Hosting
                 opt.LoginPath = "/login";
                 opt.AccessDeniedPath = "/errors/403";
                 opt.LogoutPath = "/logout";
+                ConfigureAccessDeniedRedirect(opt);
             });
             services.AddAuthentication()
                 .AddCookie(AuthenticationSchemes.LimitedLogin, options =>
                 {
-                    options.Cookie.Name = "pwd_verified";
+                    options.Cookie.Name = "limited_login";
                     options.ExpireTimeSpan = TimeSpan.FromMinutes(60); // short-lived
                     options.SlidingExpiration = false;
                     options.Cookie.HttpOnly = true;
                     options.Cookie.SecurePolicy = Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest;
-                    options.Events.OnRedirectToLogin = context =>
-                    {
-                        context.RedirectUri = QueryHelpers.AddQueryString(context.RedirectUri, [KeyValuePair.Create("allowLimitedLogin", "true")]);
-                        context.Response.Redirect(context.RedirectUri);
-                        return Task.CompletedTask;
-                    };
                     options.LoginPath = "/login";
                     options.AccessDeniedPath = "/errors/403";
                     options.LogoutPath = "/logout";
+                    ConfigureAccessDeniedRedirect(options);
                 })
-                .AddBitpayAuthentication()
                 .AddAPIKeyAuthentication();
+        }
+
+        private static void ConfigureAccessDeniedRedirect(CookieAuthenticationOptions options)
+        {
+            var onRedirectToAccessDenied = options.Events.OnRedirectToAccessDenied;
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                if (context.HttpContext.Items.TryGetValue(PermissionAuthorizationHandler.PolicyRequirementKey, out var p) &&
+                    p is PolicyRequirement policyRequirement)
+                {
+                    context.RedirectUri = QueryHelpers.AddQueryString(
+                        context.RedirectUri,
+                        UIErrorController.MissingPermissionQueryKey,
+                        policyRequirement.Policy);
+                }
+                return onRedirectToAccessDenied(context);
+            };
         }
 
         public static IApplicationBuilder UsePayServer(this IApplicationBuilder app)
         {
-            app.UseMiddleware<GreenfieldMiddleware>();
-            app.UseMiddleware<BTCPayMiddleware>();
+            app.UseMiddleware<SetCultureMiddleware>();
+            app.UseMiddleware<OnionLocationMiddleware>();
             return app;
         }
 

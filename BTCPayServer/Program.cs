@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -17,7 +16,7 @@ using Microsoft.Extensions.Logging;
 
 [assembly: InternalsVisibleTo("BTCPayServer.Tests")]
 
-// This help JetBrains to find partial views referenced by views in plugins
+// This helps JetBrains to find partial views referenced by views in plugins
 [assembly: JetBrains.Annotations.AspMvcAreaPartialViewLocationFormat("/Plugins/{2}/Views/Shared/{0}.cshtml")]
 
 namespace BTCPayServer
@@ -26,6 +25,9 @@ namespace BTCPayServer
     {
         static async Task Main(string[] args)
         {
+            // Some old instances were not as strict into parsing public keys
+            // we don't want to break this.
+            NBitcoin.ExtPubKey.SkipInvalidMasterExtPubKeyCheck = true;
             if (args.Length > 0 && args[0] == "run")
                 args = args.Skip(1).ToArray(); // Hack to make dotnet watch work
 
@@ -63,6 +65,7 @@ namespace BTCPayServer
                         //l.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Trace);
                         l.AddFilter("Microsoft.EntityFrameworkCore.Migrations", LogLevel.Information);
                         l.AddFilter("BTCPayServer.Migrations", LogLevel.Information);
+                        l.AddFilter("BTCPayServer.Security", LogLevel.Warning);
                         l.AddFilter("System.Net.Http.HttpClient", LogLevel.Critical);
                         l.AddFilter("Microsoft.AspNetCore.Antiforgery.Internal", LogLevel.Critical);
                         l.AddFilter("Fido2NetLib.DistributedCacheMetadataService", LogLevel.Error);

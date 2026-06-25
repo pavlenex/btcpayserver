@@ -1,7 +1,6 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,7 +10,6 @@ using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
-using BTCPayServer.Models.InvoicingModels;
 using BTCPayServer.Payments;
 using BTCPayServer.Payouts;
 using BTCPayServer.Rating;
@@ -33,7 +31,7 @@ namespace BTCPayServer.Controllers.Greenfield
     [ApiController]
     [Authorize(AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
     [EnableCors(CorsPolicies.All)]
-    public class GreenfieldInvoiceController : Controller
+    public class GreenfieldInvoiceController : ControllerBase
     {
         private readonly UIInvoiceController _invoiceController;
         private readonly InvoiceRepository _invoiceRepository;
@@ -94,11 +92,12 @@ namespace BTCPayServer.Controllers.Greenfield
             DateTimeOffset? endDate = null,
             [FromQuery] string? textSearch = null,
             [FromQuery] bool includeArchived = false,
+            [FromQuery] bool includePaymentMethods = false,
             [FromQuery] int? skip = null,
             [FromQuery] int? take = null
             )
         {
-            var store = HttpContext.GetStoreData()!;
+            var store = HttpContext.GetStoreData();
             if (startDate is DateTimeOffset s &&
                 endDate is DateTimeOffset e &&
                 s > e)
@@ -123,42 +122,44 @@ namespace BTCPayServer.Controllers.Greenfield
                     TextSearch = textSearch
                 });
 
-            return Ok(invoices.Select(ToModel));
+            return Ok(invoices.Select(invoice => ToModel(invoice, includePaymentMethods)));
         }
 
         [Authorize(Policy = Policies.CanViewInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpGet("~/api/v1/stores/{storeId}/invoices/{invoiceId}")]
-        public async Task<IActionResult> GetInvoice(string storeId, string invoiceId)
+        [HttpGet("~/api/v1/invoices/{invoiceId}")]
+        public async Task<IActionResult> GetInvoice(string? storeId, string invoiceId)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
-
             return Ok(ToModel(invoice));
         }
 
         [Authorize(Policy = Policies.CanModifyInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpDelete("~/api/v1/stores/{storeId}/invoices/{invoiceId}")]
-        public async Task<IActionResult> ArchiveInvoice(string storeId, string invoiceId)
+        [HttpDelete("~/api/v1/invoices/{invoiceId}")]
+        public async Task<IActionResult> ArchiveInvoice(string? storeId, string invoiceId)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
-            await _invoiceRepository.ToggleInvoiceArchival(invoiceId, true, storeId);
+            await _invoiceRepository.ToggleInvoiceArchival(HttpContext.GetStoreData().Id, invoiceId, true);
             return Ok();
         }
 
         [Authorize(Policy = Policies.CanModifyInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpPut("~/api/v1/stores/{storeId}/invoices/{invoiceId}")]
-        public async Task<IActionResult> UpdateInvoice(string storeId, string invoiceId, UpdateInvoiceRequest request)
+        [HttpPut("~/api/v1/invoices/{invoiceId}")]
+        public async Task<IActionResult> UpdateInvoice(string? storeId, string invoiceId, UpdateInvoiceRequest request)
         {
-            var result = await _invoiceRepository.UpdateInvoiceMetadata(invoiceId, storeId, request.Metadata);
-            if (!BelongsToThisStore(result))
+            if (HttpContext.GetInvoiceDataOrNull() is null)
                 return InvoiceNotFound();
-            return Ok(ToModel(result));
+            var invoice = await _invoiceRepository.UpdateInvoiceMetadata(invoiceId, storeId ?? HttpContext.GetStoreData().Id, request.Metadata);
+            return Ok(ToModel(invoice));
         }
 
         [Authorize(Policy = Policies.CanCreateInvoice,
@@ -166,7 +167,7 @@ namespace BTCPayServer.Controllers.Greenfield
         [HttpPost("~/api/v1/stores/{storeId}/invoices")]
         public async Task<IActionResult> CreateInvoice(string storeId, CreateInvoiceRequest request)
         {
-            var store = HttpContext.GetStoreData()!;
+            var store = HttpContext.GetStoreData();
             if (request.Amount < 0.0m)
             {
                 ModelState.AddModelError(nameof(request.Amount), "The amount should be 0 or more.");
@@ -237,11 +238,12 @@ namespace BTCPayServer.Controllers.Greenfield
         [Authorize(Policy = Policies.CanModifyInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpPost("~/api/v1/stores/{storeId}/invoices/{invoiceId}/status")]
-        public async Task<IActionResult> MarkInvoiceStatus(string storeId, string invoiceId,
+        [HttpPost("~/api/v1/invoices/{invoiceId}/status")]
+        public async Task<IActionResult> MarkInvoiceStatus(string? storeId, string invoiceId,
             MarkInvoiceStatusRequest request)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
 
             if (!await _invoiceRepository.MarkInvoiceStatus(invoice.Id, request.Status))
@@ -259,10 +261,11 @@ namespace BTCPayServer.Controllers.Greenfield
         [Authorize(Policy = Policies.CanModifyInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpPost("~/api/v1/stores/{storeId}/invoices/{invoiceId}/unarchive")]
-        public async Task<IActionResult> UnarchiveInvoice(string storeId, string invoiceId)
+        [HttpPost("~/api/v1/invoices/{invoiceId}/unarchive")]
+        public async Task<IActionResult> UnarchiveInvoice(string? storeId, string invoiceId)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
 
             if (!invoice.Archived)
@@ -274,17 +277,18 @@ namespace BTCPayServer.Controllers.Greenfield
             if (!ModelState.IsValid)
                 return this.CreateValidationError(ModelState);
 
-            await _invoiceRepository.ToggleInvoiceArchival(invoiceId, false, storeId);
+            await _invoiceRepository.ToggleInvoiceArchival(HttpContext.GetStoreData().Id, invoiceId, false);
             return await GetInvoice(storeId, invoiceId);
         }
 
         [Authorize(Policy = Policies.CanViewInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpGet("~/api/v1/stores/{storeId}/invoices/{invoiceId}/payment-methods")]
-        public async Task<IActionResult> GetInvoicePaymentMethods(string storeId, string invoiceId, bool onlyAccountedPayments = true, bool includeSensitive = false)
+        [HttpGet("~/api/v1/invoices/{invoiceId}/payment-methods")]
+        public async Task<IActionResult> GetInvoicePaymentMethods(string? storeId, string invoiceId, bool onlyAccountedPayments = true, bool includeSensitive = false)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
 
             if (includeSensitive && !await _authorizationService.CanModifyStore(User))
@@ -293,22 +297,14 @@ namespace BTCPayServer.Controllers.Greenfield
             return Ok(ToPaymentMethodModels(invoice, onlyAccountedPayments, includeSensitive));
         }
 
-        bool BelongsToThisStore([NotNullWhen(true)] InvoiceEntity invoice) => BelongsToThisStore(invoice, out _);
-        private bool BelongsToThisStore([NotNullWhen(true)] InvoiceEntity invoice, [MaybeNullWhen(false)] out Data.StoreData store)
-        {
-            store = this.HttpContext.GetStoreData();
-            return invoice?.StoreId is not null && store.Id == invoice.StoreId;
-        }
-
         [Authorize(Policy = Policies.CanViewInvoices,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpPost("~/api/v1/stores/{storeId}/invoices/{invoiceId}/payment-methods/{paymentMethod}/activate")]
-        public async Task<IActionResult> ActivateInvoicePaymentMethod(string storeId, string invoiceId, string paymentMethod)
+        [HttpPost("~/api/v1/invoices/{invoiceId}/payment-methods/{paymentMethod}/activate")]
+        public async Task<IActionResult> ActivateInvoicePaymentMethod(string? storeId, string invoiceId, string paymentMethod)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            if (HttpContext.GetInvoiceDataOrNull() is null)
                 return InvoiceNotFound();
-
             if (PaymentMethodId.TryParse(paymentMethod, out var paymentMethodId))
             {
                 await _invoiceActivator.ActivateInvoicePaymentMethod(invoiceId, paymentMethodId);
@@ -321,20 +317,22 @@ namespace BTCPayServer.Controllers.Greenfield
         [Authorize(Policy = Policies.CanCreateNonApprovedPullPayments,
             AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpPost("~/api/v1/stores/{storeId}/invoices/{invoiceId}/refund")]
+        [HttpPost("~/api/v1/invoices/{invoiceId}/refund")]
         public async Task<IActionResult> RefundInvoice(
-            string storeId,
+            string? storeId,
             string invoiceId,
             RefundInvoiceRequest request,
             CancellationToken cancellationToken = default
         )
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice, out var store))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
+            var store = HttpContext.GetStoreData();
+            storeId ??= store.Id;
             if (!invoice.GetInvoiceState().CanRefund())
-            {
                 return this.CreateAPIError("non-refundable", "Cannot refund this invoice");
-            }
+
             PaymentPrompt? paymentPrompt = null;
             PayoutMethodId? payoutMethodId = null;
             if (request.PayoutMethodId is null)
@@ -471,7 +469,7 @@ namespace BTCPayServer.Controllers.Greenfield
                     return this.CreateValidationError(ModelState);
             }
 
-            // reduce by percentage
+            // reduce it by percentage
             if (request.SubtractPercentage is > 0 and <= 100)
             {
                 var reduceByAmount = createPullPayment.Amount * (request.SubtractPercentage / 100);
@@ -497,10 +495,11 @@ namespace BTCPayServer.Controllers.Greenfield
         [Authorize(Policy = Policies.CanCreateNonApprovedPullPayments,
     AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpGet("~/api/v1/stores/{storeId}/invoices/{invoiceId}/refund/{paymentMethodId}")]
-        public async Task<IActionResult> GetInvoiceRefundTriggerData(string storeId, string invoiceId, string paymentMethodId, CancellationToken cancellationToken)
+        [HttpGet("~/api/v1/invoices/{invoiceId}/refund/{paymentMethodId}")]
+        public async Task<IActionResult> GetInvoiceRefundTriggerData(string? storeId, string invoiceId, string paymentMethodId, CancellationToken cancellationToken)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId, true);
-            if (!BelongsToThisStore(invoice))
+            var invoice = HttpContext.GetInvoiceDataOrNull();
+            if (invoice is null)
                 return InvoiceNotFound();
             var pmi = PaymentMethodId.TryParse(paymentMethodId);
             if (pmi == null)
@@ -640,9 +639,13 @@ namespace BTCPayServer.Controllers.Greenfield
         }
 
         [NonAction]
-        public InvoiceData ToModel(InvoiceEntity entity)
+        public InvoiceData ToModel(InvoiceEntity entity, bool includePaymentMethods = false)
         {
-            return ToModel(entity, _linkGenerator, _currencyNameTable, Request);
+            var invoiceData = ToModel(entity, _linkGenerator, _currencyNameTable, Request);
+            if (includePaymentMethods)
+                invoiceData.PaymentMethods = ToPaymentMethodModels(entity, true, false);
+
+            return invoiceData;
         }
 
         public static InvoiceData ToModel(InvoiceEntity entity, LinkGenerator linkGenerator, CurrencyNameTable currencyNameTable, HttpRequest? request)
@@ -657,7 +660,7 @@ namespace BTCPayServer.Controllers.Greenfield
             {
                 statuses.Add(InvoiceStatus.Invalid);
             }
-            var store = request?.HttpContext.GetStoreData();
+            var store = request?.HttpContext.GetStoreDataOrNull();
             var receipt = store == null ? entity.ReceiptOptions : InvoiceDataBase.ReceiptOptions.Merge(store.GetStoreBlob().ReceiptOptions, entity.ReceiptOptions);
             return new InvoiceData
             {

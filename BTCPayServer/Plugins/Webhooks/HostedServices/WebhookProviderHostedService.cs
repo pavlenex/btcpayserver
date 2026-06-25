@@ -1,12 +1,10 @@
 #nullable  enable
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
-using BTCPayServer.Plugins.Emails;
 using BTCPayServer.Plugins.Emails.HostedServices;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -76,7 +74,7 @@ public class WebhookProviderHostedService(
     }
 
     private StoreWebhookEvent Clone(StoreWebhookEvent webhookEvent)
-    => (StoreWebhookEvent)JsonConvert.DeserializeObject(JsonConvert.SerializeObject(webhookEvent), webhookEvent.GetType(), WebhookSender.DefaultSerializerSettings)!;
+    => (StoreWebhookEvent)JsonConvert.DeserializeObject(JsonConvert.SerializeObject(webhookEvent, WebhookSender.DefaultSerializerSettings), webhookEvent.GetType(), WebhookSender.DefaultSerializerSettings)!;
 
     private async Task<StoreData?> GetStore(StoreWebhookEvent webhookEvent)
     {

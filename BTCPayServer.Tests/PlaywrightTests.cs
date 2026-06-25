@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
 using BTCPayServer.Abstractions.Models;
@@ -31,12 +30,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using NBitcoin;
 using NBitcoin.Altcoins;
-using NBitpayClient;
 using NBXplorer;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
-using Xunit.Abstractions;
 using static Microsoft.Playwright.Assertions;
 
 namespace BTCPayServer.Tests
@@ -58,7 +55,7 @@ namespace BTCPayServer.Tests
             await s.ClickOnAllSectionLinks("#mainNavSettings");
             await s.GoToServer(ServerNavPages.Services);
             s.TestLogs.LogInformation("Let's check if we can access the logs");
-            await s.Page.GetByRole(AriaRole.Link, new() { Name = "Logs" }).ClickAsync();
+            await s.GoToServer(ServerNavPages.Logs);
             await s.Page.Locator("a:has-text('.log')").First.ClickAsync();
             Assert.Contains("Starting listening NBXplorer", await s.Page.ContentAsync());
         }
@@ -252,7 +249,7 @@ namespace BTCPayServer.Tests
             Assert.False(await s.Page.IsEnabledAsync("#Currency"));
 
             // archive (from details page)
-            var payReqId = s.Page.Url.Split('/').Last();
+            var payReqId = s.Page.Url.Split('/')[^2];
             await s.Page.ClickAsync("#ArchivePaymentRequest");
             await s.FindAlertMessage(partialText: "The payment request has been archived");
             Assert.DoesNotContain("Pay123", await s.Page.ContentAsync());
@@ -287,12 +284,15 @@ namespace BTCPayServer.Tests
 
 
             // Mine
-            await checkoutFrame.Locator("#mine-block button").ClickAsync();
-            await checkoutFrame.Locator("#CheatSuccessMessage").WaitForAsync();
-            Assert.Contains("Mined 1 block", await checkoutFrame.Locator("#CheatSuccessMessage").InnerTextAsync());
+            await s.Server.WaitForEvent<BTCPayServer.Services.PaymentRequests.PaymentRequestEvent>(async () =>
+            {
+                await checkoutFrame.Locator("#mine-block button").ClickAsync();
+                await checkoutFrame.Locator("#CheatSuccessMessage").WaitForAsync();
+                Assert.Contains("Mined 1 block", await checkoutFrame.Locator("#CheatSuccessMessage").InnerTextAsync());
 
-            await checkoutFrame.Locator("#close").ClickAsync();
-            await s.Page.Locator("iframe[name='btcpay']").WaitForAsync(new() { State = WaitForSelectorState.Detached });
+                await checkoutFrame.Locator("#close").ClickAsync();
+                await s.Page.Locator("iframe[name='btcpay']").WaitForAsync(new() { State = WaitForSelectorState.Detached });
+            }, ev => ev.Data.Status == PaymentRequestStatus.Completed);
 
             // One last refresh to ensure UI reflects final state
             await s.Page.ReloadAsync();
@@ -348,7 +348,7 @@ namespace BTCPayServer.Tests
             await s.RegisterNewUser(true);
             var (_, storeId) = await s.CreateNewStore();
             var network = s.Server.NetworkProvider.GetNetwork<BTCPayNetwork>(cryptoCode).NBitcoinNetwork;
-            await s.AddLightningNode(LightningConnectionType.CLightning, false);
+            await s.AddLightningNode(LightningTestImplementation.CoreLightning, false);
             await s.GoToLightningSettings();
             // LNURL is true by default
             await Expect(s.Page.Locator("#LNURLEnabled")).ToBeCheckedAsync();
@@ -358,10 +358,27 @@ namespace BTCPayServer.Tests
             // Topup Invoice test
             var i = await s.CreateInvoice(storeId, null, cryptoCode);
             await s.GoToInvoiceCheckout(i);
-            var lnurl = await s.Page.Locator("#Lightning_BTC-LNURL .truncate-center").GetAttributeAsync("data-text");
-            Assert.NotNull(lnurl);
-            var parsed = LNURL.LNURL.Parse(lnurl, out _);
-            var fetchedRequest = Assert.IsType<LNURLPayRequest>(await LNURL.LNURL.FetchInformation(parsed, new HttpClient()));
+
+
+            async Task<BOLT11PaymentRequest> AssertBolt11(LightMoney expectedValue = null)
+            {
+                var bolt11 = await s.Page.Locator("#Lightning_BTC-LN .truncate-center").GetAttributeAsync("data-text");
+                Assert.NotNull(bolt11);
+                var b = BOLT11PaymentRequest.Parse(bolt11!, s.Server.ExplorerNode.Network);
+                if (expectedValue is not null)
+                    Assert.Equal(expectedValue, b.MinimumAmount);
+                return b;
+            }
+
+            // Top-up invoices now display a zero-amount BOLT11 on checkout, like standard invoices.
+            await AssertBolt11(LightMoney.Zero);
+            var invoiceId = s.Page.Url.Split('/').Last();
+            LNURLPayRequest fetchedRequest;
+            using (var resp = await s.Server.PayTester.HttpClient.GetAsync("BTC/lnurl/pay/i/" + invoiceId))
+            {
+                resp.EnsureSuccessStatusCode();
+                fetchedRequest = JsonConvert.DeserializeObject<LNURLPayRequest>(await resp.Content.ReadAsStringAsync());
+            }
             Assert.Equal(1m, fetchedRequest.MinSendable.ToDecimal(LightMoneyUnit.Satoshi));
             Assert.NotEqual(1m, fetchedRequest.MaxSendable.ToDecimal(LightMoneyUnit.Satoshi));
             var lnurlResponse = await fetchedRequest.SendRequest(new LightMoney(0.000001m, LightMoneyUnit.BTC),
@@ -373,6 +390,7 @@ namespace BTCPayServer.Tests
             var lnurlResponse2 = await fetchedRequest.SendRequest(new LightMoney(0.000002m, LightMoneyUnit.BTC),
                 network, new HttpClient(), comment: "lol2");
             Assert.Equal(new LightMoney(0.000002m, LightMoneyUnit.BTC), lnurlResponse2.GetPaymentRequest(network).MinimumAmount);
+
             // Initial bolt was cancelled
             var res = await s.Server.CustomerLightningD.Pay(lnurlResponse.Pr);
             Assert.Equal(PayResult.Error, res.Result);
@@ -386,16 +404,16 @@ namespace BTCPayServer.Tests
             });
 
             var greenfield = await s.AsTestAccount().CreateClient();
-            var paymentMethods = await greenfield.GetInvoicePaymentMethods(s.StoreId, i);
-            Assert.Single(paymentMethods, p => p.AdditionalData["providedComment"]!.Value<string>() == "lol2");
+            var paymentMethods = await greenfield.GetInvoicePaymentMethods(i);
+            var lnurlMethod = Assert.Single(paymentMethods, p => p.PaymentMethodId == "BTC-LNURL");
+            Assert.Equal("lol2", lnurlMethod.AdditionalData["providedComment"]!.Value<string>());
             // Standard invoice test
             await s.GoToStore(storeId);
             i = await s.CreateInvoice(storeId, 0.0000001m, cryptoCode);
             await s.GoToInvoiceCheckout(i);
             // BOLT11 is also displayed for standard invoice (not LNURL, even if it is available)
-            var bolt11 = await s.Page.Locator("#Lightning_BTC-LN .truncate-center").GetAttributeAsync("data-text");
-            BOLT11PaymentRequest.Parse(bolt11!, s.Server.ExplorerNode.Network);
-            var invoiceId = s.Page.Url.Split('/').Last();
+            await AssertBolt11(LightMoney.Coins(0.0000001m));
+            invoiceId = s.Page.Url.Split('/').Last();
             using (var resp = await s.Server.PayTester.HttpClient.GetAsync("BTC/lnurl/pay/i/" + invoiceId))
             {
                 resp.EnsureSuccessStatusCode();
@@ -426,13 +444,7 @@ namespace BTCPayServer.Tests
                 lnurlResponse2.GetPaymentRequest(network).MinimumAmount);
             await s.GoToHome();
 
-            i = await s.CreateInvoice(storeId, 0.000001m, cryptoCode);
-            await s.GoToInvoiceCheckout(i);
-
-            await s.GoToStore(storeId);
-            i = await s.CreateInvoice(storeId, null, cryptoCode);
-            await s.GoToInvoiceCheckout(i);
-
+            // Bech32 mode
             await s.GoToHome();
             await s.GoToLightningSettings();
             await s.Page.UncheckAsync("#LNURLBech32Mode");
@@ -445,20 +457,26 @@ namespace BTCPayServer.Tests
 
             i = await s.CreateInvoice(storeId, null, cryptoCode);
             await s.GoToInvoiceCheckout(i);
-            lnurl = await s.Page.Locator("#Lightning_BTC-LNURL .truncate-center").GetAttributeAsync("data-text");
+            await AssertBolt11();
+            paymentMethods = await greenfield.GetInvoicePaymentMethods(i);
+            lnurlMethod = Assert.Single(paymentMethods, p => p.PaymentMethodId == "BTC-LNURL");
+            var lnurl = lnurlMethod.PaymentLink.Replace("lightning:", "", StringComparison.OrdinalIgnoreCase);
             Assert.StartsWith("lnurlp", lnurl);
             LNURL.LNURL.Parse(lnurl, out _);
 
             await s.GoToHome();
-            await s.CreateNewStore(false);
-            await s.AddLightningNode(LightningConnectionType.LndREST, false);
+            var (_, newStoreId) = await s.CreateNewStore(false);
+            await s.AddLightningNode(LightningTestImplementation.LND, false);
             await s.GoToLightningSettings();
             await s.Page.CheckAsync("#LNURLEnabled");
             await s.ClickPagePrimary();
             Assert.Contains($"{cryptoCode} Lightning settings successfully updated", await (await s.FindAlertMessage()).TextContentAsync());
             var invForPP = await s.CreateInvoice(null, cryptoCode);
             await s.GoToInvoiceCheckout(invForPP);
-            lnurl = await s.Page.Locator("#Lightning_BTC-LNURL .truncate-center").GetAttributeAsync("data-text");
+            await AssertBolt11();
+            paymentMethods = await greenfield.GetInvoicePaymentMethods(invForPP);
+            lnurlMethod = Assert.Single(paymentMethods, p => p.PaymentMethodId == "BTC-LNURL");
+            lnurl = lnurlMethod.PaymentLink.Replace("lightning:", "", StringComparison.OrdinalIgnoreCase);
             Assert.NotNull(lnurl);
             LNURL.LNURL.Parse(lnurl, out _);
 
@@ -528,7 +546,7 @@ namespace BTCPayServer.Tests
             //ensure ln address is not available as Lightning is not enable
             Assert.Equal(0, await s.Page.Locator("#menu-item-LightningAddress").CountAsync());
 
-            await s.AddLightningNode(LightningConnectionType.LndREST, false);
+            await s.AddLightningNode(LightningTestImplementation.LND, false);
 
             // Navigate to store to refresh the menu and show Lightning Address
             await s.GoToStore(s.StoreId);
@@ -809,6 +827,7 @@ namespace BTCPayServer.Tests
             await settings.UpdateSetting(policies);
             await s.RegisterNewUser(isAdmin: true);
             await s.GoToUrl("/server/services");
+            await s.Page.WaitForLoadStateAsync();
             Assert.Contains("server/services/ssh", await s.Page.ContentAsync());
             using (var client = await s.Server.PayTester.GetService<BTCPayServerOptions>().SSHSettings
                 .ConnectAsync())
@@ -842,7 +861,7 @@ namespace BTCPayServer.Tests
             await s.Page.ClickAsync("#disable");
             await s.Page.FillAsync("#ConfirmInput", "DISABLE");
             await s.Page.ClickAsync("#ConfirmContinue");
-            await s.GoToUrl("/server/services/ssh");
+            await s.GoToUrl("/server/services/ssh", true);
             Assert.True((await s.Page.ContentAsync()).Contains("404 - Page not found", StringComparison.OrdinalIgnoreCase));
 
             policies = await settings.GetSettingAsync<PoliciesSettings>();
@@ -1262,7 +1281,7 @@ namespace BTCPayServer.Tests
             await s.StartAsync();
             await s.RegisterNewUser(true);
             await s.CreateNewStore();
-            await s.GenerateWallet("BTC", "", true);
+            await s.GenerateWallet();
 
             // Create a payment request
             await s.GoToStore();
@@ -1445,7 +1464,7 @@ namespace BTCPayServer.Tests
             await s.StartAsync();
             await s.RegisterNewUser(true);
             await s.CreateNewStore();
-            await s.GenerateWallet("BTC", "", true);
+            await s.GenerateWallet();
 
             await s.GoToStore();
             await s.Page.ClickAsync("#menu-item-PaymentRequests");
@@ -1775,8 +1794,8 @@ namespace BTCPayServer.Tests
             var user = await s.RegisterNewUser(true);
             await s.SkipWizard();
             await s.GoToProfile(ManageNavPages.TwoFactorAuthentication);
-            await s.Page.FillAsync("[name='Name']", "ln wallet");
-            await s.Page.SelectOptionAsync("[name='type']", $"{(int)Fido2Credential.CredentialType.LNURLAuth}");
+            await s.Page.FillAsync("#security-device-form [name='Name']", "ln wallet");
+            await s.Page.SelectOptionAsync("select[name='type']", "LNURLAuth");
             await s.Page.ClickAsync("#btn-add");
             var linkElements = await s.Page.Locator(".tab-content a").AllAsync();
             var links = new List<string>();
@@ -1822,11 +1841,7 @@ namespace BTCPayServer.Tests
             }
             request = Assert.IsType<LNAuthRequest>(await LNURL.LNURL.FetchInformation(prevEndpoint, null));
             _ = await request.SendChallenge(linkingKey, new HttpClient());
-            await TestUtils.EventuallyAsync(() =>
-            {
-                Assert.StartsWith(s.ServerUri.ToString(), s.Page.Url);
-                return Task.CompletedTask;
-            });
+            await s.WaitLoggedIn();
         }
 
         [Fact]
@@ -1954,7 +1969,7 @@ namespace BTCPayServer.Tests
             await s.ClickPagePrimary();
 
             var o = s.Page.Context.WaitForPageAsync();
-            await s.Page.ClickAsync("text=View");
+            await s.Page.Locator(".actions-col a:has-text('View')").First.ClickAsync();
             var newPage = await o;
 
             var address = await s.Server.ExplorerNode.GetNewAddressAsync();
@@ -1979,52 +1994,6 @@ namespace BTCPayServer.Tests
             await s.Page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
             var pageContent = await s.Page.ContentAsync();
             Assert.Contains("PP1", pageContent);
-        }
-
-        [Fact]
-        public async Task CanUsePairing()
-        {
-            await using var s = CreatePlaywrightTester();
-            await s.StartAsync();
-            await s.Page.GotoAsync(s.Link("/api-access-request"));
-            Assert.Contains("ReturnUrl", s.Page.Url);
-            await s.GoToRegister();
-            await s.RegisterNewUser();
-            await s.CreateNewStore();
-            await s.AddDerivationScheme();
-
-            await s.GoToStore(s.StoreId, StoreNavPages.Tokens);
-            await s.Page.Locator("#CreateNewToken").ClickAsync();
-            await s.ClickPagePrimary();
-            var url = s.Page.Url;
-            var pairingCode = Regex.Match(new Uri(url, UriKind.Absolute).Query, "pairingCode=([^&]*)").Groups[1].Value;
-
-            await s.ClickPagePrimary();
-            await s.FindAlertMessage();
-            Assert.Contains(pairingCode, await s.Page.ContentAsync());
-
-            var client = new Bitpay(new Key(), s.ServerUri);
-            await client.AuthorizeClient(new PairingCode(pairingCode));
-            await client.CreateInvoiceAsync(
-                new Invoice { Price = 1.000000012m, Currency = "USD", FullNotifications = true },
-                Facade.Merchant);
-
-            client = new Bitpay(new Key(), s.ServerUri);
-
-            var code = await client.RequestClientAuthorizationAsync("hehe", Facade.Merchant);
-            await s.Page.GotoAsync(code.CreateLink(s.ServerUri).ToString());
-            await s.ClickPagePrimary();
-
-            await client.CreateInvoiceAsync(
-                new Invoice { Price = 1.000000012m, Currency = "USD", FullNotifications = true },
-                Facade.Merchant);
-
-            await s.Page.GotoAsync(s.Link("/api-tokens"));
-            await s.ClickPagePrimary(); // Request
-            await s.ClickPagePrimary(); // Approve
-            var url2 = s.Page.Url;
-            var pairingCode2 = Regex.Match(new Uri(url2, UriKind.Absolute).Query, "pairingCode=([^&]*)").Groups[1].Value;
-            Assert.False(string.IsNullOrEmpty(pairingCode2));
         }
 
         [Fact]
@@ -2211,7 +2180,7 @@ namespace BTCPayServer.Tests
             var (_, storeId) = await s.CreateNewStore();
             await s.GoToStore();
             await s.GenerateWallet(isHotWallet: true);
-            await s.AddLightningNode(LightningConnectionType.CLightning, false);
+            await s.AddLightningNode(LightningTestImplementation.CoreLightning, false);
 
             // Add apps
             await s.CreateApp("PointOfSale");
@@ -2229,7 +2198,7 @@ namespace BTCPayServer.Tests
             await s.AssertPageAccess(true, GetStorePath("invoices"));
             await s.AssertPageAccess(false, GetStorePath("invoices/create"));
             await s.AssertPageAccess(true, GetStorePath("payment-requests"));
-            await s.AssertPageAccess(false, GetStorePath("payment-requests/edit"));
+            await s.AssertPageAccess(false, GetStorePath("payment-requests/new"));
             await s.AssertPageAccess(true, GetStorePath("pull-payments"));
             await s.AssertPageAccess(true, GetStorePath("payouts"));
             await s.AssertPageAccess(false, GetStorePath("onchain/BTC"));
@@ -2250,45 +2219,6 @@ namespace BTCPayServer.Tests
                     Assert.Equal(0, await s.Page.Locator("#mainContent .btn-primary").CountAsync());
                 }
             }
-        }
-
-        [Fact]
-        [Trait("Playwright", "Playwright")]
-        public async Task CanSigninWithLoginCode()
-        {
-            await using var s = CreatePlaywrightTester();
-            await s.StartAsync();
-            var user = await s.RegisterNewUser();
-            await s.GoToHome();
-            await s.GoToProfile(ManageNavPages.LoginCodes);
-
-            await s.Page.WaitForSelectorAsync("#LoginCode .qr-code");
-            var code = await s.Page.Locator("#LoginCode .qr-code").GetAttributeAsync("alt");
-            string prevCode = code;
-            await s.Page.ReloadAsync();
-            await s.Page.WaitForSelectorAsync("#LoginCode .qr-code");
-            code = await s.Page.Locator("#LoginCode .qr-code").GetAttributeAsync("alt");
-            Assert.NotEqual(prevCode, code);
-            await s.Page.WaitForSelectorAsync("#LoginCode .qr-code");
-            code = await s.Page.Locator("#LoginCode .qr-code").GetAttributeAsync("alt");
-            await s.Logout();
-            await s.GoToLogin();
-            await s.Page.EvaluateAsync("document.getElementById('LoginCode').value = 'bad code'");
-            await s.Page.EvaluateAsync("document.getElementById('logincode-form').submit()");
-            await s.Page.WaitForLoadStateAsync();
-
-            await s.GoToLogin();
-            await s.Page.EvaluateAsync($"document.getElementById('LoginCode').value = '{code}'");
-            await s.Page.EvaluateAsync("document.getElementById('logincode-form').submit()");
-            await s.Page.WaitForLoadStateAsync();
-            await s.Page.WaitForLoadStateAsync();
-
-            await s.CreateNewStore();
-            await s.GoToHome();
-            await s.Page.WaitForLoadStateAsync();
-            await s.Page.WaitForLoadStateAsync();
-            var content = await s.Page.ContentAsync();
-            Assert.Contains(user, content);
         }
 
         [Fact]
@@ -2359,25 +2289,25 @@ namespace BTCPayServer.Tests
             });
 
             // ensure archived invoices are not accessible for logged out users
-            await s.Server.PayTester.InvoiceRepository.ToggleInvoiceArchival(i, true);
+            await s.Server.PayTester.InvoiceRepository.ToggleInvoiceArchival(s.StoreId, i);
             await s.GoToHome();
             await s.Logout();
 
-            await s.GoToUrl($"/i/{i}/receipt");
+            await s.GoToUrl($"/i/{i}/receipt", true);
             await TestUtils.EventuallyAsync(async () =>
             {
                 var title = await s.Page.TitleAsync();
                 Assert.Contains("Page not found", title, StringComparison.OrdinalIgnoreCase);
             });
 
-            await s.GoToUrl($"/i/{i}");
+            await s.GoToUrl($"/i/{i}", true);
             await TestUtils.EventuallyAsync(async () =>
             {
                 var title = await s.Page.TitleAsync();
                 Assert.Contains("Page not found", title, StringComparison.OrdinalIgnoreCase);
             });
 
-            await s.GoToUrl($"/i/{i}/status");
+            await s.GoToUrl($"/i/{i}/status", true);
             await TestUtils.EventuallyAsync(async () =>
             {
                 var title = await s.Page.TitleAsync();
@@ -2410,6 +2340,7 @@ namespace BTCPayServer.Tests
                 document.getElementById('EndDate').value = yst.toISOString();
             ");
             await s.ClickPagePrimary();
+            await s.Page.WaitForLoadStateAsync(LoadState.NetworkIdle);
             var pageContent = await s.Page.ContentAsync();
             Assert.Contains("End date cannot be before start date", pageContent);
             Assert.DoesNotContain("App updated", pageContent);
@@ -2524,6 +2455,7 @@ namespace BTCPayServer.Tests
             await s.PayInvoice(true, 20);
             invoiceId = s.Page.Url[(s.Page.Url.LastIndexOf("/", StringComparison.Ordinal) + 1)..];
             await s.GoToInvoice(invoiceId);
+            await s.Page.WaitForLoadStateAsync(LoadState.NetworkIdle);
             pageContent = await s.Page.ContentAsync();
             Assert.Contains("test-with-perk@crowdfund.com", pageContent);
         }

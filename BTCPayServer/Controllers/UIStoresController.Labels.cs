@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
-using BTCPayServer.Models.WalletViewModels;
+using BTCPayServer.Plugins.Wallets.Views.ViewModels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -21,10 +21,6 @@ public partial class UIStoresController
         bool excludeTypes = true,
         string? linkedType = null)
     {
-        var store = CurrentStore;
-        if (store is null || !string.Equals(store.Id, storeId, StringComparison.Ordinal))
-            return NotFound();
-
         if (string.IsNullOrEmpty(linkedType))
             return BadRequest("linkedType is required.");
 
@@ -52,10 +48,6 @@ public partial class UIStoresController
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> UpdateStoreLabels(string storeId, [FromBody] UpdateStoreLabelsRequest request)
     {
-        var store = CurrentStore;
-        if (store is null || !string.Equals(store.Id, storeId, StringComparison.Ordinal))
-            return NotFound();
-
         if (string.IsNullOrWhiteSpace(request.Type) || string.IsNullOrWhiteSpace(request.Id))
             return BadRequest();
 

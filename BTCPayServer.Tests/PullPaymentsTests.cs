@@ -17,11 +17,9 @@ using BTCPayServer.Views.Stores;
 using Dapper;
 using LNURL;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Playwright;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using Xunit;
-using Xunit.Abstractions;
 using static Microsoft.Playwright.Assertions;
 using PayoutData = BTCPayServer.Data.PayoutData;
 
@@ -44,12 +42,12 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
             }, e => e.Type == PayoutEvent.PayoutEventType.Created)).Payout;
         }
         s.Server.DeleteStore = false;
-        s.Server.ActivateLightning(LightningConnectionType.LndREST);
+        s.Server.ActivateLightning(LightningTestImplementation.LND);
         await s.StartAsync();
         await s.Server.EnsureChannelsSetup();
         await s.RegisterNewUser(true);
         await s.CreateNewStore();
-        await s.GenerateWallet("BTC", "", true, true);
+        await s.GenerateWallet("BTC", "", true);
 
         await s.Server.ExplorerNode.GenerateAsync(1);
         await s.FundStoreWallet(denomination: 50.0m);
@@ -156,7 +154,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         //offline/external payout test
 
         await s.CreateNewStore();
-        await s.GenerateWallet("BTC", "", true, true);
+        await s.GenerateWallet("BTC", "", true);
         await s.GoToStore(s.StoreId, StoreNavPages.PullPayments);
 
         await s.ClickPagePrimary();
@@ -215,7 +213,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.AddLightningNode();
 
         //Currently an onchain wallet is required to use the Lightning payouts feature…
-        await s.GenerateWallet("BTC", "", true, true);
+        await s.GenerateWallet("BTC", "", true);
         await s.GoToStore(newStore.storeId, StoreNavPages.PullPayments);
         await s.ClickPagePrimary();
 
@@ -226,7 +224,6 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.Page.FillAsync("#Amount", payoutAmount.ToString());
         await s.Page.FillAsync("#Currency", "BTC");
         await s.ClickPagePrimary();
-        await s.Page.Locator(".actions-col a:has-text('View')").First.ClickAsync();
         string bolt;
         PayoutData payout;
         await using (await s.SwitchPage(async () =>
@@ -538,7 +535,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
             Amount = 0.5m,
             Currency = "BTC",
         }, controller.HttpContext.GetStoreData(), controller.Url.Link(null, null)!, [PullPaymentHostedService.GetInternalTag(pp.Id)]);
-        await client.MarkInvoiceStatus(user.StoreId, invoice.Id, new() { Status = InvoiceStatus.Settled });
+        await client.MarkInvoiceStatus(invoice.Id, new() { Status = InvoiceStatus.Settled });
 
         await TestUtils.EventuallyAsync(async () =>
         {
@@ -640,7 +637,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await tester.EnsureChannelsSetup();
         var acc = tester.NewAccount();
         await acc.GrantAccessAsync(true);
-        acc.RegisterLightningNode("BTC", LightningConnectionType.CLightning, false);
+        acc.RegisterLightningNode("BTC", LightningTestImplementation.CoreLightning, false);
         var storeId = (await acc.RegisterDerivationSchemeAsync("BTC", importKeysToNBX: true)).StoreId;
         var client = await acc.CreateClient();
         var result = await client.CreatePullPayment(storeId, new CreatePullPaymentRequest()
@@ -686,12 +683,9 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         });
         Assert.Equal(TimeSpan.FromDays(31.0), test2.BOLT11Expiration);
 
-        TestLogs.LogInformation("Can't archive without knowing the walletId");
-        var ex = await AssertEx.AssertApiError("missing-permission", async () => await client.ArchivePullPayment("lol", result.Id));
-        Assert.Equal("btcpay.store.canarchivepullpayments", ((GreenfieldPermissionAPIError)ex.APIError).MissingPermission);
         TestLogs.LogInformation("Can't archive without permission");
-        await AssertEx.AssertApiError("unauthenticated", async () => await unauthenticated.ArchivePullPayment(storeId, result.Id));
-        await client.ArchivePullPayment(storeId, result.Id);
+        await AssertEx.AssertApiError("unauthenticated", async () => await unauthenticated.ArchivePullPayment(result.Id));
+        await client.ArchivePullPayment(result.Id);
         result = await unauthenticated.GetPullPayment(result.Id);
         Assert.Equal(TimeSpan.FromDays(30.0), result.BOLT11Expiration);
         Assert.True(result.Archived);
@@ -897,7 +891,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         });
         Assert.Equal(0, card.Version);
         var card1Keys = new[] { card.K0, card.K1, card.K2, card.K3, card.K4 };
-        Assert.DoesNotContain(null, card1Keys);
+        Assert.All(card1Keys, Assert.NotNull);
 
         var card2 = await client.RegisterBoltcard(test4.Id, new RegisterBoltcardRequest()
         {
@@ -913,7 +907,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         Assert.StartsWith("lnurlw://", card2.LNURLW);
         Assert.EndsWith("/boltcard", card2.LNURLW);
         var card2Keys = new[] { card2.K0, card2.K1, card2.K2, card2.K3, card2.K4 };
-        Assert.DoesNotContain(null, card2Keys);
+        Assert.All(card2Keys, Assert.NotNull);
         for (var i = 0; i < card1Keys.Length; i++)
         {
             if (i == 1)
@@ -1022,7 +1016,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.StartAsync();
         await s.RegisterNewUser(true);
         await s.CreateNewStore();
-        await s.GenerateWallet("BTC", "", true, true);
+        await s.GenerateWallet("BTC", "", true);
         await s.Server.ExplorerNode.GenerateAsync(1);
         await s.FundStoreWallet(denomination: 50.0m);
 
@@ -1035,7 +1029,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.ClickPagePrimary();
 
         var opening = s.Page.Context.WaitForPageAsync();
-        await s.Page.ClickAsync("text=View");
+        await s.Page.Locator(".actions-col a:has-text('View')").First.ClickAsync();
         var newPage = await opening;
         await Expect(newPage.Locator("body")).ToContainTextAsync("PP1");
         await newPage.CloseAsync();
@@ -1050,7 +1044,7 @@ public class PullPaymentsTests(ITestOutputHelper helper) : UnitTestBase(helper)
         await s.FindAlertMessage();
 
         await using (await s.SwitchPage(async () => {
-                         await s.Page.ClickAsync("text=View");
+                         await s.Page.Locator(".actions-col a:has-text('View')").First.ClickAsync();
                      }))
         {
             try

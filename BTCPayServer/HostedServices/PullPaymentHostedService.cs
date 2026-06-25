@@ -10,8 +10,7 @@ using BTCPayServer.Data;
 using BTCPayServer.Events;
 using BTCPayServer.Lightning;
 using BTCPayServer.Logging;
-using BTCPayServer.Models.WalletViewModels;
-using BTCPayServer.Payments;
+using BTCPayServer.Plugins.Wallets.Views.ViewModels;
 using BTCPayServer.Payouts;
 using BTCPayServer.Rating;
 using BTCPayServer.Services;
@@ -19,14 +18,11 @@ using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Notifications;
 using BTCPayServer.Services.Notifications.Blobs;
 using BTCPayServer.Services.Rates;
-using Dapper;
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using NBXplorer;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using PayoutData = BTCPayServer.Data.PayoutData;
 using PullPaymentData = BTCPayServer.Data.PullPaymentData;
@@ -43,7 +39,13 @@ namespace BTCPayServer.HostedServices
             public CancelRequest(string pullPaymentId)
             {
                 ArgumentNullException.ThrowIfNull(pullPaymentId);
-                PullPaymentId = pullPaymentId;
+                PullPaymentIds = new[] { pullPaymentId };
+            }
+
+            public CancelRequest(string[] pullPaymentIds)
+            {
+                ArgumentNullException.ThrowIfNull(pullPaymentIds);
+                PullPaymentIds = pullPaymentIds;
             }
 
             public CancelRequest(string[] payoutIds, string[] storeIds)
@@ -54,8 +56,7 @@ namespace BTCPayServer.HostedServices
             }
 
             public string[] StoreIds { get; set; }
-
-            public string PullPaymentId { get; set; }
+            public string[] PullPaymentIds { get; set; }
             public string[] PayoutIds { get; set; }
             internal TaskCompletionSource<Dictionary<string, MarkPayoutRequest.PayoutPaidResult>> Completion { get; set; }
         }
@@ -772,13 +773,21 @@ namespace BTCPayServer.HostedServices
             {
                 using var ctx = this._dbContextFactory.CreateContext();
                 List<PayoutData> payouts = null;
-                if (cancel.PullPaymentId != null)
+                if (cancel.PullPaymentIds != null)
                 {
-                    ctx.PullPayments.Attach(new Data.PullPaymentData() { Id = cancel.PullPaymentId, Archived = true })
-                        .Property(o => o.Archived).IsModified = true;
+                    var ppIds = cancel.StoreIds == null
+                        ? cancel.PullPaymentIds
+                        : (await ctx.PullPayments
+                            .Where(pp => cancel.PullPaymentIds.Contains(pp.Id) && cancel.StoreIds.Contains(pp.StoreId))
+                            .Select(pp => pp.Id)
+                            .ToListAsync()).ToArray();
+                    foreach (var ppId in ppIds)
+                    {
+                        ctx.PullPayments.Attach(new Data.PullPaymentData() { Id = ppId, Archived = true })
+                            .Property(o => o.Archived).IsModified = true;
+                    }
                     payouts = await ctx.Payouts
-                        .Where(p => p.PullPaymentDataId == cancel.PullPaymentId)
-                        .Where(p => cancel.StoreIds == null || cancel.StoreIds.Contains(p.StoreDataId))
+                        .Where(p => ppIds.Contains(p.PullPaymentDataId))
                         .ToListAsync();
 
                     cancel.PayoutIds = payouts.Select(data => data.Id).ToArray();

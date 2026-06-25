@@ -49,19 +49,23 @@ namespace BTCPayServer.Tests
                 int.Parse(GetEnvironment("TESTS_MAILPIT_HTTP", "34218")));
             TestLogs.LogInformation($"MailPit settings: http://{MailPitSettings.Hostname}:{MailPitSettings.HttpPort} (SMTP: {MailPitSettings.SmtpPort})");
             _NetworkProvider = networkProvider;
-            ExplorerNode = new RPCClient(RPCCredentialString.Parse(GetEnvironment("TESTS_BTCRPCCONNECTION", "server=http://127.0.0.1:43782;ceiwHEbqWI83:DwubwWsoo3")), NetworkProvider.GetNetwork<BTCPayNetwork>("BTC").NBitcoinNetwork);
-            ExplorerNode.ScanRPCCapabilities();
+            var noDefaultNode = bool.Parse(GetEnvironment("BTCPAY_NODEFAULTCHAIN", "false"));
+            if (!noDefaultNode)
+            {
+                ExplorerNode = new RPCClient(RPCCredentialString.Parse(GetEnvironment("TESTS_BTCRPCCONNECTION", "server=http://127.0.0.1:43782;ceiwHEbqWI83:DwubwWsoo3")), NetworkProvider.GetNetwork<BTCPayNetwork>("BTC").NBitcoinNetwork);
+                ExplorerNode.ScanRPCCapabilities();
 
-            ExplorerClient = new ExplorerClient(NetworkProvider.GetNetwork<BTCPayNetwork>("BTC").NBXplorerNetwork, new Uri(GetEnvironment("TESTS_BTCNBXPLORERURL", "http://127.0.0.1:32838/")));
+                ExplorerClient = new ExplorerClient(NetworkProvider.GetNetwork<BTCPayNetwork>("BTC").NBXplorerNetwork, new Uri(GetEnvironment("TESTS_BTCNBXPLORERURL", "http://127.0.0.1:32838/")));
+            }
 
             PayTester = new BTCPayServerTester(TestLogs, LoggerProvider, Path.Combine(_Directory, "pay"))
             {
-                NBXplorerUri = ExplorerClient.Address,
+                NBXplorerUri = !noDefaultNode ? ExplorerClient.Address : null,
                 // TODO: The fact that we use same conn string as development database can cause huge problems with tests
                 // since in dev we already can have some users / stores registered, while on CI database is being initalized
                 // for the first time and first registered user gets admin status by default
                 Postgres = GetEnvironment("TESTS_POSTGRES", DefaultConnectionString),
-                ExplorerPostgres = GetEnvironment("TESTS_EXPLORER_POSTGRES", "User ID=postgres;Include Error Detail=true;Host=127.0.0.1;Port=39372;Database=nbxplorer"),
+                ExplorerPostgres = !noDefaultNode ? GetEnvironment("TESTS_EXPLORER_POSTGRES", "User ID=postgres;Include Error Detail=true;Host=127.0.0.1;Port=39372;Database=nbxplorer") : null
             };
             if (newDb)
             {
@@ -105,25 +109,24 @@ namespace BTCPayServer.Tests
 
         public void ActivateLightning()
         {
-            ActivateLightning(LightningConnectionType.CLightning);
+            ActivateLightning(LightningTestImplementation.CoreLightning);
         }
-        public void ActivateLightning(string internalNode)
+        public void ActivateLightning(LightningTestImplementation internalNode)
         {
             var btc = NetworkProvider.GetNetwork<BTCPayNetwork>("BTC").NBitcoinNetwork;
             var factory = new LightningClientFactory(btc);
             CustomerLightningD = factory.Create(GetEnvironment("TEST_CUSTOMERLIGHTNINGD", "type=clightning;server=tcp://127.0.0.1:30992/"));
             MerchantLightningD = factory.Create(GetEnvironment("TEST_MERCHANTLIGHTNINGD", "type=clightning;server=tcp://127.0.0.1:30993/"));
-            MerchantCharge = new ChargeTester(this, "TEST_MERCHANTCHARGE", "type=charge;server=http://127.0.0.1:54938/;api-token=foiewnccewuify;allowinsecure=true", "merchant_lightningd", btc);
             MerchantLnd = new LndMockTester(this, "TEST_MERCHANTLND", "http://lnd:lnd@127.0.0.1:35531/", "merchant_lnd", btc);
             PayTester.UseLightning = true;
             PayTester.IntegratedLightning = GetLightningConnectionString(internalNode, true);
         }
-        public string GetLightningConnectionString(string connectionType, bool isMerchant)
+        public string GetLightningConnectionString(LightningTestImplementation connectionType, bool isMerchant)
         {
             string connectionString = null;
-            if (connectionType is null)
+            if (connectionType is LightningTestImplementation.Internal)
                 return LightningPaymentMethodConfig.InternalNode;
-            if (connectionType == LightningConnectionType.CLightning)
+            if (connectionType == LightningTestImplementation.CoreLightning)
             {
                 if (isMerchant)
                     connectionString = "type=clightning;server=" +
@@ -132,7 +135,7 @@ namespace BTCPayServer.Tests
                     connectionString = "type=clightning;server=" +
                                    ((CLightningClient)CustomerLightningD).Address.AbsoluteUri;
             }
-            else if (connectionType == LightningConnectionType.LndREST)
+            else if (connectionType == LightningTestImplementation.LND)
             {
                 if (isMerchant)
                     connectionString = $"type=lnd-rest;server={MerchantLnd.Swagger.BaseUrl};allowinsecure=true";
@@ -140,7 +143,7 @@ namespace BTCPayServer.Tests
                     throw new NotSupportedException();
             }
             else
-                throw new NotSupportedException(connectionType);
+                throw new NotSupportedException(connectionType.ToString());
             return connectionString;
         }
 
@@ -213,7 +216,6 @@ namespace BTCPayServer.Tests
         public ILightningClient CustomerLightningD { get; set; }
 
         public ILightningClient MerchantLightningD { get; private set; }
-        public ChargeTester MerchantCharge { get; private set; }
         public LndMockTester MerchantLnd { get; set; }
 
         internal string GetEnvironment(string variable, string defaultValue)

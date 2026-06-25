@@ -10,7 +10,6 @@ using BTCPayServer.Configuration;
 using BTCPayServer.Data;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Lightning;
-using BTCPayServer.Lightning.LndHub;
 using BTCPayServer.Payments.Bitcoin;
 using BTCPayServer.Security;
 using BTCPayServer.Services;
@@ -77,11 +76,6 @@ namespace BTCPayServer.Payments.Lightning
 
         public async Task ConfigurePrompt(PaymentMethodContext context)
         {
-            if (context.InvoiceEntity.Type == InvoiceType.TopUp)
-            {
-                throw new PaymentMethodUnavailableException("Lightning Network payment method is not available for top-up invoices");
-            }
-
             var paymentPrompt = context.Prompt;
 
             var preferOnion = Uri.TryCreate(context.InvoiceEntity.ServerUrl, UriKind.Absolute, out var u) && u.IsOnion();
@@ -96,6 +90,7 @@ namespace BTCPayServer.Payments.Lightning
             decimal due = paymentPrompt.Calculate().Due;
             var client = config.CreateLightningClient(_Network, Options.Value, _lightningClientFactory);
             var expiry = invoice.ExpirationTime - DateTimeOffset.UtcNow;
+            var isTopUpInvoice = invoice.Type == InvoiceType.TopUp;
             if (expiry < TimeSpan.Zero)
                 expiry = TimeSpan.FromSeconds(1);
 
@@ -109,14 +104,22 @@ namespace BTCPayServer.Payments.Lightning
             {
                 try
                 {
-                    var request = new CreateInvoiceParams(new LightMoney(due, LightMoneyUnit.BTC), description, expiry);
+                    // For top-up invoices, pass LightMoney.Zero to request an amountless bolt11.
+                    // The backend decides whether it supports this
+                    var invoiceAmount = isTopUpInvoice ? LightMoney.Zero : new LightMoney(due, LightMoneyUnit.BTC);
+                    var request = new CreateInvoiceParams(invoiceAmount, description, expiry);
                     request.PrivateRouteHints = storeBlob.LightningPrivateRouteHints;
                     lightningInvoice = await client.CreateInvoice(request, cts.Token);
-                    var diff = request.Amount - lightningInvoice.Amount;
-                    if (diff != LightMoney.Zero)
+
+                    // Since No Invoice Amount so Skip the Tweak Fee check
+                    if (!isTopUpInvoice)
                     {
-                        // Some providers doesn't round up to msat. So we tweak the fees so the due match the BOLT11's amount.
-                        paymentPrompt.AddTweakFee(-diff.ToUnit(LightMoneyUnit.BTC));
+                        var diff = request.Amount - lightningInvoice.Amount;
+                        if (diff != LightMoney.Zero)
+                        {
+                            // Some providers doesn't round up to msat. So we tweak the fees so the due match the BOLT11's amount.
+                            paymentPrompt.AddTweakFee(-diff.ToUnit(LightMoneyUnit.BTC));
+                        }
                     }
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -137,6 +140,8 @@ namespace BTCPayServer.Payments.Lightning
                 InvoiceId = lightningInvoice.Id,
                 NodeInfo = (await nodeInfo).FirstOrDefault()?.ToString()
             };
+            if (details.PaymentHash is {} h)
+                context.TrackedDestinations.Add(h.ToString());
             paymentPrompt.Details = JObject.FromObject(details, Serializer);
         }
 
@@ -152,10 +157,6 @@ namespace BTCPayServer.Payments.Lightning
             {
                 using var cts = new CancellationTokenSource(LightningTimeout);
                 var client = CreateLightningClient(supportedPaymentMethod);
-
-                // LNDhub-compatible implementations might not offer all of GetInfo data.
-                // Skip checks in those cases, see https://github.com/lnbits/lnbits/issues/1182
-                var isLndHub = client is LndHubLightningClient;
 
                 LightningNodeInformation info;
                 try
@@ -190,7 +191,8 @@ namespace BTCPayServer.Payments.Lightning
                 if (summary?.Status is not null)
                 {
                     var blocksGap = summary.Status.ChainHeight - info.BlockHeight;
-                    if (blocksGap > 10 && !(isLndHub && info.BlockHeight == 0))
+                    // If BlockHeight is 0, maybe the provider just doesn't support it.
+                    if (blocksGap > 10 && info.BlockHeight != 0)
                     {
                         throw new PaymentMethodUnavailableException(
                             $"The lightning node is not synched ({blocksGap} blocks left)");

@@ -1,13 +1,16 @@
-﻿#nullable enable
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Models;
+using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Configuration;
 using BTCPayServer.Data;
 using BTCPayServer.Plugins.Emails.Views;
 using BTCPayServer.Plugins.Subscriptions.Controllers;
+using BTCPayServer.Security;
+using BTCPayServer.Services;
 using BTCPayServer.Services.Apps;
 using BTCPayServer.Views.UIStoreMembership;
 using Microsoft.AspNetCore.Routing;
@@ -31,6 +34,12 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
         services.AddScheduledTask<SubscriptionHostedService>(TimeSpan.FromMinutes(5));
         services.AddSingleton<SubscriptionHostedService>();
         services.AddSingleton<IHostedService>(s => s.GetRequiredService<SubscriptionHostedService>());
+        services.AddReportProvider<SubscribersReportProvider>();
+        services.AddReportProvider<SubscriberCreditHistoryReportProvider>();
+
+        services.AddSingleton(new BuiltInPermissionScopeProvider.RouteValueToStoreIdQuery(
+            "offeringId", "SELECT a.\"StoreDataId\" FROM \"Apps\" a JOIN subs_offerings o ON o.app_id=a.\"Id\" WHERE o.id=@id"
+        ));
 
         services.AddScheduledDbScript("Portal Session Cleanup",
             """
@@ -62,10 +71,34 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
             SELECT COUNT(*) FROM deleted_plan_checkout;
             """);
 
-
         AddSubscriptionsWebhooks(services);
-
+        AddPolicies(services);
         base.Execute(services);
+    }
+
+    private void AddPolicies(IServiceCollection services)
+    {
+        services.AddPolicyDefinitions(new[]
+        {
+            new PolicyDefinition(
+                SubscriptionsPolicies.CanViewOfferings,
+                new PermissionDisplay("View your offerings", "Allows viewing offerings on all your stores."),
+                new PermissionDisplay("View your offerings", "Allows viewing offerings on the selected stores.")),
+            new PolicyDefinition(
+                SubscriptionsPolicies.CanModifyOfferings,
+                new PermissionDisplay("Modify your offerings", "Allows modifying offerings on all your stores."),
+                new PermissionDisplay("Modify your offerings", "Allows modifying offerings on the selected stores."),
+                new[] { SubscriptionsPolicies.CanViewOfferings, SubscriptionsPolicies.CanManageSubscribers, SubscriptionsPolicies.CanCreditSubscribers },
+                includedByPermissions: [Policies.CanModifyStoreSettings]),
+            new PolicyDefinition(
+                SubscriptionsPolicies.CanManageSubscribers,
+                new PermissionDisplay("Manage your subscribers", "Allows managing subscribers on all your stores."),
+                new PermissionDisplay("Manage your subscribers", "Allows managing subscribers on the selected stores.")),
+            new PolicyDefinition(
+                SubscriptionsPolicies.CanCreditSubscribers,
+                new PermissionDisplay("Credit your subscribers", "Allows crediting subscribers on all your stores."),
+                new PermissionDisplay("Credit your subscribers", "Allows crediting subscribers on the selected stores.")),
+        });
     }
 
     private void AddSubscriptionsWebhooks(IServiceCollection services)
@@ -195,6 +228,18 @@ public class SubscriptionsPlugin : BaseBTCPayServerPlugin
                     To = ["{Subscriber.Email}"],
                     Subject = "Your subscription needs to be upgraded",
                     Body = "Hello {Customer.Name},\n\nYour subscription needs to be upgraded to continue using our service.\n\nRegards,\n{Store.Name}"
+                },
+                PlaceHolders = placeHolders
+            },
+            new()
+            {
+                Trigger = WebhookSubscriptionEvent.CreditRefunded,
+                Description = "Subscription - Credit refund issued",
+                DefaultEmail = new()
+                {
+                    To = ["{Subscriber.Email}"],
+                    Subject = "Your credit refund is ready to claim",
+                    Body = "Hello {Customer.Name},<br/><br/>A credit refund of {Refund.Amount} {Refund.Currency} has been issued for your subscription.<br/><br/><a href=\"{Refund.ClaimUrl}\">Claim your refund here</a><br/><br/>Regards,<br/>{Store.Name}"
                 },
                 PlaceHolders = placeHolders
             },

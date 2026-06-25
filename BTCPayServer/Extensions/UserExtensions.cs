@@ -1,8 +1,6 @@
+#nullable enable
 using System;
-using System.Linq;
 using BTCPayServer.Data;
-using BTCPayServer.Services.Invoices;
-using Newtonsoft.Json.Linq;
 
 namespace BTCPayServer
 {
@@ -12,10 +10,16 @@ namespace BTCPayServer
         {
             if (user is null)
                 throw new ArgumentNullException(nameof(user));
-            var name = user.UserName ?? String.Empty;
-            if (user.Email == user.UserName)
-                name = String.Empty;
-            return new MimeKit.MailboxAddress(name, user.Email);
+
+            var name = user.GetBlob()?.Name;
+            try
+            {
+                return new MimeKit.MailboxAddress(name ?? "", user.Email!);
+            }
+            catch  // Invalid encoding or format; treat as no valid mailbox
+            {
+            }
+            return new MimeKit.MailboxAddress(string.Empty, user.Email!);
         }
     }
 }

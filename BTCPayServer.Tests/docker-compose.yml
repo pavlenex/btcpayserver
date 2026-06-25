@@ -72,7 +72,7 @@ services:
         - "sshd_datadir:/root/.ssh"
 
   devlnd:
-    image: btcpayserver/bitcoin:29.1
+    image: btcpayserver/bitcoin:31.0
     environment:
       BITCOIN_NETWORK: regtest
       BITCOIN_WALLETDIR: "/data/wallets"
@@ -81,6 +81,7 @@ services:
         connect=bitcoind:39388
         fallbackfee=0.0002
         rpcallowip=0.0.0.0/0
+        unsafesqlitesync=1
     depends_on:
       - nbxplorer
       - postgres
@@ -99,7 +100,7 @@ services:
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
 
   nbxplorer:
-    image: nicolasdorier/nbxplorer:2.5.29
+    image: nicolasdorier/nbxplorer:2.6.5
     restart: unless-stopped
     ports:
       - "32838:32838"
@@ -124,7 +125,7 @@ services:
 
   bitcoind:
     restart: unless-stopped
-    image: btcpayserver/bitcoin:29.1
+    image: btcpayserver/bitcoin:31.0
     environment:
       BITCOIN_NETWORK: regtest
       BITCOIN_WALLETDIR: "/data/wallets"
@@ -141,6 +142,7 @@ services:
         deprecatedrpc=signrawtransaction
         fallbackfee=0.0002
         minrelaytxfee=0.00001000
+        unsafesqlitesync=1
     ports:
       - "43782:43782"
       - "39388:39388"
@@ -153,7 +155,7 @@ services:
       - "bitcoin_datadir:/data"
 
   customer_lightningd:
-    image: btcpayserver/lightning:v25.05
+    image: btcpayserver/lightning:v26.06.1
     stop_signal: SIGKILL
     restart: unless-stopped
     environment:
@@ -182,7 +184,7 @@ services:
       - bitcoind
 
   merchant_lightningd:
-    image: btcpayserver/lightning:v25.05
+    image: btcpayserver/lightning:v26.06.1
     stop_signal: SIGKILL
     restart: unless-stopped
     environment:
@@ -216,13 +218,14 @@ services:
         POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "39372:5432"
+    command: ["-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
     expose:
       - "5432"
     volumes:
       - "postgres_test_datadir:/var/lib/postgresql"
 
   merchant_lnd:
-    image: btcpayserver/lnd:v0.19.3-beta
+    image: btcpayserver/lnd:v0.21.0-beta
     restart: unless-stopped
     environment:
       LND_CHAIN: "btc"
@@ -260,7 +263,7 @@ services:
       - bitcoind
 
   customer_lnd:
-    image: btcpayserver/lnd:v0.19.3-beta
+    image: btcpayserver/lnd:v0.21.0-beta
     restart: unless-stopped
     environment:
       LND_CHAIN: "btc"
@@ -316,7 +319,6 @@ volumes:
     elementsd_liquid_datadir:
     customer_lightningd_datadir:
     merchant_lightningd_datadir:
-    lightning_charge_datadir:
     customer_lnd_datadir:
     merchant_lnd_datadir:
     postgres_test_datadir:

@@ -1,6 +1,4 @@
-﻿using System;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Converters;
 
 namespace BTCPayServer.Client.Models;
@@ -16,6 +14,7 @@ public class WebhookSubscriptionEvent : StoreWebhookEvent
     public const string PaymentReminder = nameof(PaymentReminder);
     public const string PlanStarted = nameof(PlanStarted);
     public const string SubscriberNeedUpgrade = nameof(SubscriberNeedUpgrade);
+    public const string CreditRefunded = nameof(CreditRefunded);
 
     public static bool IsSubscriptionTrigger(string trigger)
         => IsSubscriptionType(trigger.Substring(3));
@@ -28,7 +27,9 @@ public class WebhookSubscriptionEvent : StoreWebhookEvent
         SubscriberPhaseChanged or
         SubscriberDisabled or
         PaymentReminder or
-        PlanStarted;
+        PlanStarted or
+        SubscriberNeedUpgrade or
+        CreditRefunded;
     public class SubscriberEvent : WebhookSubscriptionEvent
     {
         public SubscriberEvent()
@@ -66,6 +67,21 @@ public class WebhookSubscriptionEvent : StoreWebhookEvent
         public decimal Total { get; set; }
         public decimal Amount { get; set; }
         public string Currency { get; set; }
+    }
+
+    public class CreditRefundedEvent : WebhookSubscriptionEvent.SubscriberEvent
+    {
+        public CreditRefundedEvent()
+        {
+        }
+
+        public CreditRefundedEvent(string storeId) : base(CreditRefunded, storeId)
+        {
+        }
+
+        public decimal Amount { get; set; }
+        public string Currency { get; set; }
+        public string PullPaymentUrl { get; set; }
     }
 
 
@@ -113,6 +129,12 @@ public class WebhookSubscriptionEvent : StoreWebhookEvent
 
     public class SubscriberDisabledEvent : WebhookSubscriptionEvent.SubscriberEvent
     {
+        public enum DisabledReason
+        {
+            Suspension,
+            Expired
+        }
+
         public SubscriberDisabledEvent()
         {
         }
@@ -120,6 +142,10 @@ public class WebhookSubscriptionEvent : StoreWebhookEvent
         public SubscriberDisabledEvent(string storeId) : base(SubscriberDisabled, storeId)
         {
         }
+
+        [JsonConverter(typeof(StringEnumConverter))]
+        public DisabledReason Reason { get; set; }
+        public string SuspensionReason { get; set; }
     }
 
     public class PaymentReminderEvent : WebhookSubscriptionEvent.SubscriberEvent

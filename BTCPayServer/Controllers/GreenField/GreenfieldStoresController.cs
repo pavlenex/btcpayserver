@@ -11,6 +11,7 @@ using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
+using BTCPayServer.Security;
 using BTCPayServer.Services;
 using BTCPayServer.Services.Rates;
 using BTCPayServer.Services.Stores;
@@ -37,6 +38,8 @@ namespace BTCPayServer.Controllers.Greenfield
         private readonly IFileService _fileService;
         private readonly UriResolver _uriResolver;
         private readonly JsonSerializerSettings _serializedSettings;
+        private readonly PoliciesSettings _policiesSettings;
+        private readonly IAuthorizationService _authorizationService;
 
         public GreenfieldStoresController(
             StoreRepository storeRepository,
@@ -44,7 +47,9 @@ namespace BTCPayServer.Controllers.Greenfield
             UserManager<ApplicationUser> userManager,
             IFileService fileService,
             IOptions<MvcNewtonsoftJsonOptions> jsonOptions,
-            UriResolver uriResolver)
+            UriResolver uriResolver,
+            PoliciesSettings policiesSettings,
+            IAuthorizationService authorizationService)
         {
             _storeRepository = storeRepository;
             _currencyNameTable = currencyNameTable;
@@ -52,6 +57,8 @@ namespace BTCPayServer.Controllers.Greenfield
             _fileService = fileService;
             _uriResolver = uriResolver;
             _serializedSettings = jsonOptions.Value.SerializerSettings;
+            _policiesSettings = policiesSettings;
+            _authorizationService = authorizationService;
         }
 
         [Authorize(Policy = Policies.CanViewStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
@@ -70,19 +77,13 @@ namespace BTCPayServer.Controllers.Greenfield
         [Authorize(Policy = Policies.CanViewStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpGet("~/api/v1/stores/{storeId}")]
         public async Task<IActionResult> GetStore(string storeId)
-        {
-            var store = HttpContext.GetStoreData();
-            return store == null ? StoreNotFound() : Ok(await FromModel(store));
-        }
+        => Ok(await FromModel(HttpContext.GetStoreData()));
 
         [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
         [HttpDelete("~/api/v1/stores/{storeId}")]
         public async Task<IActionResult> RemoveStore(string storeId)
         {
-            var store = HttpContext.GetStoreData();
-            if (store == null) return StoreNotFound();
-
-            await _storeRepository.RemoveStore(storeId, _userManager.GetUserId(User) ?? "");
+            await _storeRepository.RemoveStore(storeId, User.GetId());
             return Ok();
         }
 
@@ -95,7 +96,13 @@ namespace BTCPayServer.Controllers.Greenfield
             var validationResult = Validate(request);
             if (validationResult != null) return validationResult;
             ToModel(request, store);
-            await _storeRepository.CreateStore(_userManager.GetUserId(User) ?? "", store);
+
+            var result = await _storeRepository.CreateStore(User.GetId(), store);
+            if (result == StoreRepository.CreateStoreResult.QuotaExceeded)
+            {
+                return this.CreateAPIError(403, "store-limit-reached",
+                    $"You have reached the maximum number of stores allowed.");
+            }
             return Ok(await FromModel(store));
         }
 
@@ -118,7 +125,6 @@ namespace BTCPayServer.Controllers.Greenfield
         public async Task<IActionResult> UpdateStore(string storeId, UpdateStoreRequest request)
         {
             var store = HttpContext.GetStoreData();
-            if (store == null) return StoreNotFound();
             request = await MergeStoreRequestWithTemplate(request, store);
             var validationResult = Validate(request);
             if (validationResult != null) return validationResult;
@@ -133,7 +139,8 @@ namespace BTCPayServer.Controllers.Greenfield
         {
             var user = await _userManager.GetUserAsync(User);
             var store = HttpContext.GetStoreData();
-            if (user == null || store == null) return StoreNotFound();
+            if (user == null)
+                return this.CreateAPIError(400, "user-not-found", "The user was not found");
 
             UploadImageResultModel upload = null;
             if (file is null)
@@ -168,14 +175,12 @@ namespace BTCPayServer.Controllers.Greenfield
         public async Task<IActionResult> DeleteStoreLogo(string storeId)
         {
             var store = HttpContext.GetStoreData();
-            if (store == null) return StoreNotFound();
 
             var blob = store.GetStoreBlob();
             var fileId = (blob.LogoUrl as UnresolvedUri.FileIdUri)?.FileId;
             if (!string.IsNullOrEmpty(fileId))
             {
-                var userId = _userManager.GetUserId(User)!;
-                await _fileService.RemoveFile(fileId, userId);
+                await _fileService.RemoveFile(fileId, User.GetId());
                 blob.LogoUrl = null;
                 store.SetStoreBlob(blob);
                 await _storeRepository.UpdateStore(store);
@@ -381,11 +386,6 @@ namespace BTCPayServer.Controllers.Greenfield
                 }
             }
             return !ModelState.IsValid ? this.CreateValidationError(ModelState) : null;
-        }
-
-        private IActionResult StoreNotFound()
-        {
-            return this.CreateAPIError(404, "store-not-found", "The store was not found");
         }
     }
 }

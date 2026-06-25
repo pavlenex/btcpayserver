@@ -1,8 +1,5 @@
-using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Hosting;
 using BTCPayServer.Logging;
@@ -11,7 +8,6 @@ using BTCPayServer.Plugins;
 using BTCPayServer.Tests.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using NBXplorer;
-using Xunit.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Memory;
 using NBitcoin;
